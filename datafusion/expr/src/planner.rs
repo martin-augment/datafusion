@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use crate::expr::NullTreatment;
 use crate::{
-    AggregateUDF, Expr, GetFieldAccess, ScalarUDF, SortExpr, BatchedTableFunctionSource,
+    AggregateUDF, BatchedTableFunctionSource, Expr, GetFieldAccess, ScalarUDF, SortExpr,
     TableSource, WindowFrame, WindowFunctionDefinition, WindowUDF,
 };
 use arrow::datatypes::{DataType, Field, SchemaRef};
