@@ -214,47 +214,61 @@ impl ScalarUDFImpl for DatePartFunc {
             array
         } else if is_timezone_aware {
             // For timezone-aware timestamps, extract in their own timezone
-            let tz_str = tz_str_opt.as_ref().unwrap();
-            let tz = match tz_str.parse::<Tz>() {
-                Ok(tz) => tz,
-                Err(_) => return exec_err!("Invalid timezone"),
-            };
-            match array.data_type() {
-                Timestamp(time_unit, _) => match time_unit {
-                    Nanosecond => {
-                        adjust_timestamp_array::<TimestampNanosecondType>(&array, tz)?
+            match tz_str_opt.as_ref() {
+                Some(tz_str) => {
+                    let tz = match tz_str.parse::<Tz>() {
+                        Ok(tz) => tz,
+                        Err(_) => return exec_err!("Invalid timezone"),
+                    };
+                    match array.data_type() {
+                        Timestamp(time_unit, _) => match time_unit {
+                            Nanosecond => adjust_timestamp_array::<
+                                TimestampNanosecondType,
+                            >(&array, tz)?,
+                            Microsecond => adjust_timestamp_array::<
+                                TimestampMicrosecondType,
+                            >(&array, tz)?,
+                            Millisecond => adjust_timestamp_array::<
+                                TimestampMillisecondType,
+                            >(&array, tz)?,
+                            Second => {
+                                adjust_timestamp_array::<TimestampSecondType>(&array, tz)?
+                            }
+                        },
+                        _ => array,
                     }
-                    Microsecond => {
-                        adjust_timestamp_array::<TimestampMicrosecondType>(&array, tz)?
-                    }
-                    Millisecond => {
-                        adjust_timestamp_array::<TimestampMillisecondType>(&array, tz)?
-                    }
-                    Second => adjust_timestamp_array::<TimestampSecondType>(&array, tz)?,
-                },
-                _ => array,
+                }
+                None => array,
             }
         } else if let Timestamp(time_unit, None) = array.data_type() {
-            // For naive timestamps, interpret in session timezone
-            let tz = if let Some(tz_str) = &config.execution.time_zone {
-                match tz_str.parse::<Tz>() {
-                    Ok(tz) => tz,
-                    Err(_) => return exec_err!("Invalid timezone"),
+            // For naive timestamps, interpret in session timezone if available
+            match config.execution.time_zone.as_ref() {
+                Some(tz_str) => {
+                    let tz = match tz_str.parse::<Tz>() {
+                        Ok(tz) => tz,
+                        Err(_) => return exec_err!("Invalid timezone"),
+                    };
+
+                    match time_unit {
+                        Nanosecond => {
+                            adjust_timestamp_array::<TimestampNanosecondType>(&array, tz)?
+                        }
+                        Microsecond => {
+                            adjust_timestamp_array::<TimestampMicrosecondType>(
+                                &array, tz,
+                            )?
+                        }
+                        Millisecond => {
+                            adjust_timestamp_array::<TimestampMillisecondType>(
+                                &array, tz,
+                            )?
+                        }
+                        Second => {
+                            adjust_timestamp_array::<TimestampSecondType>(&array, tz)?
+                        }
+                    }
                 }
-            } else {
-                return exec_err!("time_zone is not configured");
-            };
-            match time_unit {
-                Nanosecond => {
-                    adjust_timestamp_array::<TimestampNanosecondType>(&array, tz)?
-                }
-                Microsecond => {
-                    adjust_timestamp_array::<TimestampMicrosecondType>(&array, tz)?
-                }
-                Millisecond => {
-                    adjust_timestamp_array::<TimestampMillisecondType>(&array, tz)?
-                }
-                Second => adjust_timestamp_array::<TimestampSecondType>(&array, tz)?,
+                None => array,
             }
         } else {
             array
@@ -277,27 +291,30 @@ impl ScalarUDFImpl for DatePartFunc {
                 _ => return exec_err!("Date part '{part}' not supported"),
             };
 
-            // For fixed offsets (like +04:00, -05:30), apply the offset to extract values.
-            // Named timezones (like 'America/New_York') are handled by adjust_to_local_time
-            // and DST is already applied via chrono.
+            // For fixed offsets (like +04:00, -05:30), apply the offset to extract values
             if is_timezone_aware {
-                let tz_str = tz_str_opt.as_ref().unwrap().as_ref();
-                if is_fixed_offset(tz_str) {
-                    if let Some(offset_info) = extract_offset_components(tz_str) {
-                        match interval_unit {
-                            IntervalUnit::Hour => apply_hour_offset(
-                                extracted.as_ref(),
-                                offset_info.hours,
-                                offset_info.minutes,
-                            )?,
-                            IntervalUnit::Minute => apply_minute_offset(
-                                extracted.as_ref(),
-                                offset_info.minutes,
-                            )?,
-                            IntervalUnit::Day => {
-                                apply_day_offset(extracted.as_ref(), offset_info.hours)?
+                if let Some(tz_str) = tz_str_opt.as_ref() {
+                    let tz_str = tz_str.as_ref();
+                    if is_fixed_offset(tz_str) {
+                        if let Some(offset_info) = extract_offset_components(tz_str) {
+                            match interval_unit {
+                                IntervalUnit::Hour => apply_hour_offset(
+                                    extracted.as_ref(),
+                                    offset_info.hours,
+                                    offset_info.minutes,
+                                )?,
+                                IntervalUnit::Minute => apply_minute_offset(
+                                    extracted.as_ref(),
+                                    offset_info.minutes,
+                                )?,
+                                IntervalUnit::Day => apply_day_offset(
+                                    extracted.as_ref(),
+                                    offset_info.hours,
+                                )?,
+                                _ => extracted,
                             }
-                            _ => extracted,
+                        } else {
+                            extracted
                         }
                     } else {
                         extracted
@@ -435,9 +452,7 @@ fn apply_day_offset(array: &dyn Array, offset_hours: i32) -> Result<ArrayRef> {
         .iter()
         .map(|day| {
             day.map(|d| {
-                if offset_hours >= 24 {
-                    d + (offset_hours / 24)
-                } else if offset_hours <= -24 {
+                if offset_hours >= 24 || offset_hours <= -24 {
                     d + (offset_hours / 24)
                 } else if offset_hours > 0 {
                     d + 1
