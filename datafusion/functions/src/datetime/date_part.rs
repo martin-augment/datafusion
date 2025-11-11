@@ -236,11 +236,15 @@ impl ScalarUDFImpl for DatePartFunc {
             }
         } else if let Timestamp(time_unit, None) = array.data_type() {
             // For naive timestamps, interpret in session timezone
-            let tz_str = config.execution.time_zone.as_ref()
+            let tz_str = config
+                .execution
+                .time_zone
+                .as_deref()
                 .ok_or_else(|| exec_err!("time_zone is not configured"))?;
 
-            let tz: Tz = tz_str.parse()
-                .map_err(|_| exec_err!("Invalid timezone: {tz_str}"))?;
+            let tz: Tz = tz_str
+                .parse()
+                .map_err(|_| exec_err!("Invalid timezone: {}", tz_str))?;
             match time_unit {
                 Nanosecond => {
                     adjust_timestamp_array::<TimestampNanosecondType>(&array, tz)?
