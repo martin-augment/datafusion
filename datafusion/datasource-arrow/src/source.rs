@@ -56,7 +56,6 @@ use object_store::{GetOptions, GetRange, GetResultPayload, ObjectStore};
 pub(crate) struct ArrowFileSource {
     table_schema: TableSchema,
     metrics: ExecutionPlanMetricsSet,
-    projected_statistics: Option<Statistics>,
     schema_adapter_factory: Option<Arc<dyn SchemaAdapterFactory>>,
 }
 
@@ -66,7 +65,6 @@ impl ArrowFileSource {
         Self {
             table_schema: table_schema.into(),
             metrics: ExecutionPlanMetricsSet::new(),
-            projected_statistics: None,
             schema_adapter_factory: None,
         }
     }
@@ -103,26 +101,16 @@ impl FileSource for ArrowFileSource {
         Arc::new(Self { ..self.clone() })
     }
 
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        let mut conf = self.clone();
-        conf.projected_statistics = Some(statistics);
-        Arc::new(conf)
-    }
+    
 
-    fn with_projection(&self, _config: &FileScanConfig) -> Arc<dyn FileSource> {
-        Arc::new(Self { ..self.clone() })
+    )
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        let statistics = &self.projected_statistics;
-        Ok(statistics
-            .clone()
-            .expect("projected_statistics must be set"))
-    }
+    
 
     fn file_type(&self) -> &str {
         "arrow"
@@ -148,7 +136,6 @@ impl FileSource for ArrowFileSource {
 pub(crate) struct ArrowStreamFileSource {
     table_schema: TableSchema,
     metrics: ExecutionPlanMetricsSet,
-    projected_statistics: Option<Statistics>,
     schema_adapter_factory: Option<Arc<dyn SchemaAdapterFactory>>,
 }
 
@@ -158,7 +145,6 @@ impl ArrowStreamFileSource {
         Self {
             table_schema: table_schema.into(),
             metrics: ExecutionPlanMetricsSet::new(),
-            projected_statistics: None,
             schema_adapter_factory: None,
         }
     }
@@ -191,14 +177,9 @@ impl FileSource for ArrowStreamFileSource {
         Arc::new(Self { ..self.clone() })
     }
 
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        let mut conf = self.clone();
-        conf.projected_statistics = Some(statistics);
-        Arc::new(conf)
-    }
+    
 
-    fn with_projection(&self, _config: &FileScanConfig) -> Arc<dyn FileSource> {
-        Arc::new(Self { ..self.clone() })
+    )
     }
 
     fn repartitioned(
@@ -224,12 +205,7 @@ impl FileSource for ArrowStreamFileSource {
         &self.metrics
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        let statistics = &self.projected_statistics;
-        Ok(statistics
-            .clone()
-            .expect("projected_statistics must be set"))
-    }
+    
 
     fn file_type(&self) -> &str {
         "arrow_stream"
@@ -484,25 +460,17 @@ impl FileSource for ArrowSource {
         })
     }
 
-    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
-        Arc::new(Self {
-            inner: self.inner.with_projection(config),
-        })
+    )
     }
 
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        Arc::new(Self {
-            inner: self.inner.with_statistics(statistics),
-        })
+    )
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         self.inner.metrics()
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        self.inner.statistics()
-    }
+    
 
     fn file_type(&self) -> &str {
         self.inner.file_type()
