@@ -66,6 +66,8 @@ pub trait FileSource: Send + Sync {
     fn table_schema(&self) -> &crate::table_schema::TableSchema;
     /// Initialize new type with batch size configuration
     fn with_batch_size(&self, batch_size: usize) -> Arc<dyn FileSource>;
+    /// Initialize new instance with projection information
+    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource>;
     /// Returns the filter expression that will be applied during the file scan.
     fn filter(&self) -> Option<Arc<dyn PhysicalExpr>> {
         None

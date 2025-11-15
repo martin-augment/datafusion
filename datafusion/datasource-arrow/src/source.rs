@@ -38,7 +38,7 @@ use datafusion_datasource::{as_file_source, TableSchema};
 use arrow::buffer::Buffer;
 use arrow::ipc::reader::{FileDecoder, FileReader, StreamReader};
 use datafusion_common::error::Result;
-use datafusion_common::{exec_datafusion_err, Statistics};
+use datafusion_common::exec_datafusion_err;
 use datafusion_datasource::file::FileSource;
 use datafusion_datasource::file_scan_config::FileScanConfig;
 use datafusion_datasource::PartitionedFile;
@@ -101,16 +101,13 @@ impl FileSource for ArrowFileSource {
         Arc::new(Self { ..self.clone() })
     }
 
-    
-
-    )
+    fn with_projection(&self, _config: &FileScanConfig) -> Arc<dyn FileSource> {
+        Arc::new(Self { ..self.clone() })
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
     }
-
-    
 
     fn file_type(&self) -> &str {
         "arrow"
@@ -177,9 +174,8 @@ impl FileSource for ArrowStreamFileSource {
         Arc::new(Self { ..self.clone() })
     }
 
-    
-
-    )
+    fn with_projection(&self, _config: &FileScanConfig) -> Arc<dyn FileSource> {
+        Arc::new(Self { ..self.clone() })
     }
 
     fn repartitioned(
@@ -204,8 +200,6 @@ impl FileSource for ArrowStreamFileSource {
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
     }
-
-    
 
     fn file_type(&self) -> &str {
         "arrow_stream"
@@ -460,17 +454,15 @@ impl FileSource for ArrowSource {
         })
     }
 
-    )
-    }
-
-    )
+    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
+        Arc::new(Self {
+            inner: self.inner.with_projection(config),
+        })
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         self.inner.metrics()
     }
-
-    
 
     fn file_type(&self) -> &str {
         self.inner.file_type()

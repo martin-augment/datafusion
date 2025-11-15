@@ -37,7 +37,6 @@ use datafusion_physical_plan::{ExecutionPlan, ExecutionPlanProperties};
 
 use arrow::json::ReaderBuilder;
 use arrow::{datatypes::SchemaRef, json};
-use datafusion_common::Statistics;
 use datafusion_datasource::file::FileSource;
 use datafusion_datasource::file_scan_config::FileScanConfig;
 use datafusion_execution::TaskContext;
@@ -129,6 +128,10 @@ impl FileSource for JsonSource {
         let mut conf = self.clone();
         conf.batch_size = Some(batch_size);
         Arc::new(conf)
+    }
+
+    fn with_projection(&self, _config: &FileScanConfig) -> Arc<dyn FileSource> {
+        Arc::new(Self { ..self.clone() })
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {

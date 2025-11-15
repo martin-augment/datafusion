@@ -92,15 +92,15 @@ impl FileSource for AvroSource {
         Arc::new(conf)
     }
 
-    
-
-    
+    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
+        let mut conf = self.clone();
+        conf.projection = config.projected_file_column_names();
+        Arc::new(conf)
+    }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
     }
-
-    
 
     fn file_type(&self) -> &str {
         "avro"

@@ -505,7 +505,10 @@ impl DataSource for FileScanConfig {
             .batch_size
             .unwrap_or_else(|| context.session_config().batch_size());
 
-        let source = self.file_source.with_batch_size(batch_size);
+        let source = self
+            .file_source
+            .with_batch_size(batch_size)
+            .with_projection(self);
 
         let opener = source.create_file_opener(object_store, self, partition);
 

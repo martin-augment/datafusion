@@ -264,14 +264,16 @@ impl FileSource for CsvSource {
         Arc::new(conf)
     }
 
-    
-
-    
+    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
+        let mut conf = self.clone();
+        conf.file_projection = config.file_column_projection_indices();
+        Arc::new(conf)
+    }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
     }
-    
+
     fn file_type(&self) -> &str {
         "csv"
     }

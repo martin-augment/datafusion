@@ -37,7 +37,7 @@ use datafusion_datasource::schema_adapter::{
 
 use arrow::datatypes::TimeUnit;
 use datafusion_common::config::TableParquetOptions;
-use datafusion_common::{DataFusionError};
+use datafusion_common::DataFusionError;
 use datafusion_datasource::file::FileSource;
 use datafusion_datasource::file_scan_config::FileScanConfig;
 use datafusion_datasource::TableSchema;
@@ -620,6 +620,10 @@ impl FileSource for ParquetSource {
         let mut conf = self.clone();
         conf.batch_size = Some(batch_size);
         Arc::new(conf)
+    }
+
+    fn with_projection(&self, _config: &FileScanConfig) -> Arc<dyn FileSource> {
+        Arc::new(Self { ..self.clone() })
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {

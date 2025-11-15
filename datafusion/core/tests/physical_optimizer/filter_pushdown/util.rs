@@ -172,23 +172,8 @@ impl FileSource for TestSource {
         })
     }
 
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        Arc::new(TestSource {
-            statistics: Some(statistics),
-            ..self.clone()
-        })
-    }
-
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
-    }
-
-    fn statistics(&self) -> Result<Statistics> {
-        Ok(self
-            .statistics
-            .as_ref()
-            .expect("statistics not set")
-            .clone())
     }
 
     fn file_type(&self) -> &str {
