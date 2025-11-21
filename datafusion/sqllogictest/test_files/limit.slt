@@ -394,8 +394,8 @@ SELECT ROW_NUMBER() OVER (PARTITION BY t1.column1) FROM t t1, t t2, t t3;
 statement ok
 set datafusion.explain.show_sizes = false;
 
-# verify that there are multiple partitions in the input so that this tests
-# multi-partition limit.
+# verify that with small row count (1000 < batch_size), single partition is used
+# instead of multi-partition to avoid unnecessary repartitioning overhead.
 query TT
 EXPLAIN SELECT DISTINCT i FROM t1000;
 ----
@@ -403,11 +403,8 @@ logical_plan
 01)Aggregate: groupBy=[[t1000.i]], aggr=[[]]
 02)--TableScan: t1000 projection=[i]
 physical_plan
-01)AggregateExec: mode=FinalPartitioned, gby=[i@0 as i], aggr=[]
-02)--CoalesceBatchesExec: target_batch_size=8192
-03)----RepartitionExec: partitioning=Hash([i@0], 4), input_partitions=1
-04)------AggregateExec: mode=Partial, gby=[i@0 as i], aggr=[]
-05)--------DataSourceExec: partitions=1
+01)AggregateExec: mode=Single, gby=[i@0 as i], aggr=[]
+02)--DataSourceExec: partitions=1
 
 statement ok
 set datafusion.explain.show_sizes = true;
