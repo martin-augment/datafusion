@@ -33,6 +33,7 @@ use crate::cast::{
 use crate::error::Result;
 use crate::error::{_internal_datafusion_err, _internal_err};
 use std::cell::RefCell;
+use std::sync::Arc;
 
 // Combines two hashes into one hash
 #[inline]
@@ -484,6 +485,41 @@ fn hash_fixed_list_array(
     Ok(())
 }
 
+#[cfg(not(feature = "force_hash_collisions"))]
+fn hash_run_array<R: RunEndIndexType>(
+    array: &RunArray<R>,
+    random_state: &RandomState,
+    hashes_buffer: &mut [u64],
+    rehash: bool,
+) -> Result<()> {
+    let values = array.values();
+    let values_len = values.len();
+    let mut values_hashes = vec![0u64; values_len];
+    create_hashes(&[Arc::clone(values)], random_state, &mut values_hashes)?;
+
+    let run_ends = array.run_ends();
+    let mut prev_run_end = 0;
+
+    for i in 0..values_len {
+        let run_end = run_ends.values()[i].as_usize();
+        let value_hash = values_hashes[i];
+
+        if rehash {
+            for pos in prev_run_end..run_end {
+                hashes_buffer[pos] = combine_hashes(value_hash, hashes_buffer[pos]);
+            }
+        } else {
+            for pos in prev_run_end..run_end {
+                hashes_buffer[pos] = value_hash;
+            }
+        }
+
+        prev_run_end = run_end;
+    }
+
+    Ok(())
+}
+
 /// Internal helper function that hashes a single array and either initializes or combines
 /// the hash values in the buffer.
 #[cfg(not(feature = "force_hash_collisions"))]
@@ -534,6 +570,10 @@ fn hash_single_array(
         DataType::Union(_, _) => {
             let array = as_union_array(array)?;
             hash_union_array(array, random_state, hashes_buffer)?;
+        }
+        DataType::RunEndEncoded(_, _) => downcast_run_array! {
+            array => hash_run_array(array, random_state, hashes_buffer, rehash)?,
+            _ => unreachable!()
         }
         _ => {
             // This is internal because we should have caught this before.
@@ -802,6 +842,91 @@ mod tests {
     create_hash_string!(large_string_array, LargeStringArray);
     create_hash_string!(string_view_array, StringArray);
     create_hash_string!(dict_string_array, DictionaryArray<Int8Type>);
+
+    #[test]
+    #[cfg(not(feature = "force_hash_collisions"))]
+    fn create_hashes_for_run_array() -> Result<()> {
+        // Create values and run_ends for RunArray
+        let values = Arc::new(Int32Array::from(vec![10, 20, 30]));
+        let run_ends = Arc::new(Int32Array::from(vec![2, 5, 7]));
+
+        // Create the RunArray
+        let array = Arc::new(RunArray::try_new(&run_ends, values.as_ref()).unwrap());
+
+        // Create hashes
+        let random_state = RandomState::with_seeds(0, 0, 0, 0);
+        let hashes_buff = &mut vec![0; array.len()];
+        let hashes =
+            create_hashes(&[array.clone() as ArrayRef], &random_state, hashes_buff)?;
+
+        // The length should be 7 (last run end)
+        assert_eq!(hashes.len(), 7);
+
+        // Values at indices 0,1 should have the same hash (value 10)
+        assert_eq!(hashes[0], hashes[1]);
+
+        // Values at indices 2,3,4 should have the same hash (value 20)
+        assert_eq!(hashes[2], hashes[3]);
+        assert_eq!(hashes[3], hashes[4]);
+
+        // Values at indices 5,6 should have the same hash (value 30)
+        assert_eq!(hashes[5], hashes[6]);
+
+        // Hashes for different values should be different
+        assert_ne!(hashes[0], hashes[2]);
+        assert_ne!(hashes[2], hashes[5]);
+        assert_ne!(hashes[0], hashes[5]);
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(not(feature = "force_hash_collisions"))]
+    fn create_multi_column_hash_with_run_array() -> Result<()> {
+        // Create a regular Int32Array
+        let int_array = Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5, 6, 7]));
+
+        // Create a RunArray with same logical length
+        let values = Arc::new(StringArray::from(vec!["foo", "bar", "baz"]));
+        let run_ends = Arc::new(Int32Array::from(vec![2, 5, 7]));
+        let run_array = Arc::new(RunArray::try_new(&run_ends, values.as_ref()).unwrap());
+
+        // Create hashes for single column (int array)
+        let random_state = RandomState::with_seeds(0, 0, 0, 0);
+        let mut one_col_hashes = vec![0; int_array.len()];
+        create_hashes(
+            &[int_array.clone() as ArrayRef],
+            &random_state,
+            &mut one_col_hashes,
+        )?;
+
+        // Create hashes for both columns
+        let mut two_col_hashes = vec![0; int_array.len()];
+        create_hashes(
+            &[int_array.clone() as ArrayRef, run_array.clone() as ArrayRef],
+            &random_state,
+            &mut two_col_hashes,
+        )?;
+
+        // Verify lengths
+        assert_eq!(one_col_hashes.len(), 7);
+        assert_eq!(two_col_hashes.len(), 7);
+
+        // Hashes should be different when including the Run array
+        assert_ne!(one_col_hashes, two_col_hashes);
+
+        // Indices 0,1 should have the same Run value ("foo") so their rehash pattern should be consistent
+        let diff_0_vs_1_one_col = one_col_hashes[0] != one_col_hashes[1];
+        let diff_0_vs_1_two_col = two_col_hashes[0] != two_col_hashes[1];
+        assert_eq!(diff_0_vs_1_one_col, diff_0_vs_1_two_col);
+
+        // Similarly for indices with the same Run value ("bar")
+        let diff_2_vs_3_one_col = one_col_hashes[2] != one_col_hashes[3];
+        let diff_2_vs_3_two_col = two_col_hashes[2] != two_col_hashes[3];
+        assert_eq!(diff_2_vs_3_one_col, diff_2_vs_3_two_col);
+
+        Ok(())
+    }
 
     #[test]
     // Tests actual values of hashes, which are different if forcing collisions
