@@ -109,7 +109,7 @@ bigdecimal = "0.4.8"
 bytes = "1.11"
 bzip2 = "0.6.1"
 chrono = { version = "0.4.42", default-features = false }
-criterion = "0.7"
+criterion = "0.8"
 ctor = "0.6.1"
 dashmap = "6.0.1"
 datafusion = { path = "datafusion/core", version = "51.0.0", default-features = false }
@@ -197,6 +197,7 @@ or_fun_call = "warn"
 unnecessary_lazy_evaluations = "warn"
 uninlined_format_args = "warn"
 inefficient_to_string = "warn"
+# https://github.com/apache/datafusion/issues/18503
 needless_pass_by_value = "warn"
 
 [workspace.lints.rust]
