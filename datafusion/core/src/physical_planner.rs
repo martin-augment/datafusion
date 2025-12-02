@@ -64,6 +64,7 @@ use arrow_schema::Field;
 use datafusion_catalog::ScanArgs;
 use datafusion_common::display::ToStringifiedPlan;
 use datafusion_common::format::ExplainAnalyzeLevel;
+use datafusion_common::stats::Precision;
 use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion, TreeNodeVisitor};
 use datafusion_common::{
     assert_eq_or_internal_err, assert_or_internal_err, TableReference,
@@ -801,7 +802,11 @@ impl DefaultPhysicalPlanner {
 
                 let can_repartition = !groups.is_empty()
                     && session_state.config().target_partitions() > 1
-                    && session_state.config().repartition_aggregations();
+                    && session_state.config().repartition_aggregations()
+                    && has_sufficient_rows_for_repartition(
+                        initial_aggr.input(),
+                        session_state,
+                    )?;
 
                 // Some aggregators may be modified during initialization for
                 // optimization purposes. For example, a FIRST_VALUE may turn
@@ -1577,6 +1582,20 @@ impl DefaultPhysicalPlanner {
             ))
         }
     }
+}
+
+fn has_sufficient_rows_for_repartition(
+    input: &Arc<dyn ExecutionPlan>,
+    session_state: &SessionState,
+) -> Result<bool> {
+    let stats = input.partition_statistics(None)?;
+
+    if let Precision::Exact(num_rows) = stats.num_rows {
+        let batch_size = session_state.config().batch_size();
+        return Ok(num_rows > batch_size);
+    }
+
+    Ok(true)
 }
 
 /// Expand and align a GROUPING SET expression.
