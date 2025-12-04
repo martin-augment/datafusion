@@ -207,6 +207,16 @@ SELECT ends_with('foobar', 'foo')
 ----
 false
 
+query BB
+SELECT ends_with('foobar', '%bar'), ends_with('foo%bar', '%bar')
+----
+false true
+
+query BB
+SELECT ends_with('foobar', '_bar'), ends_with('foo_bar', '_bar')
+----
+false true
+
 query I
 SELECT levenshtein('kitten', 'sitting')
 ----
@@ -845,6 +855,16 @@ query B
 SELECT starts_with('foobar', 'bar')
 ----
 false
+
+query BB
+SELECT starts_with('foobar', 'foo%'), starts_with('foo%bar', 'foo%')
+----
+false true
+
+query BB
+SELECT starts_with('foobar', 'foo_'), starts_with('foo_bar', 'foo_')
+----
+false true
 
 query TT
 select '   ', '|'

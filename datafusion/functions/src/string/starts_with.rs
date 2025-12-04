@@ -132,15 +132,15 @@ impl ScalarUDFImpl for StartsWithFunc {
     ) -> Result<ExprSimplifyResult> {
         if let Expr::Literal(scalar_value, _) = &args[1] {
             // Convert starts_with(col, 'prefix') to col LIKE 'prefix%' with proper escaping
-            // Example: starts_with(col, 'ja%') -> col LIKE 'ja\%%'
-            //   1. 'ja%'         (input pattern)
-            //   2. 'ja\%'        (escape special char '%')
-            //   3. 'ja\%%'       (add suffix for starts_with)
+            // Example: starts_with(col, 'j_a%') -> col LIKE 'j\_a\%%'
+            //   1. 'j_a%'         (input pattern)
+            //   2. 'j\_a\%'       (escape special chars '%' and '_')
+            //   3. 'j\_a\%%'      (add unescaped % suffix for starts_with)
             let like_expr = match scalar_value {
                 ScalarValue::Utf8(Some(pattern))
                 | ScalarValue::LargeUtf8(Some(pattern))
                 | ScalarValue::Utf8View(Some(pattern)) => {
-                    let escaped_pattern = pattern.replace("%", "\\%");
+                    let escaped_pattern = pattern.replace("%", "\\%").replace("_", "\\_");
                     let like_pattern = format!("{escaped_pattern}%");
                     Expr::Literal(ScalarValue::Utf8(Some(like_pattern)), None)
                 }
