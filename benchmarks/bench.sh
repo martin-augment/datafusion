@@ -99,6 +99,9 @@ clickbench_partitioned: ClickBench queries against partitioned (100 files) parqu
 clickbench_pushdown:    ClickBench queries against partitioned (100 files) parquet w/ filter_pushdown enabled
 clickbench_extended:    ClickBench \"inspired\" queries against a single parquet (DataFusion specific)
 
+# Sorted Data Benchmarks (ORDER BY Optimization)
+data_sorted_clickbench:     ClickBench queries on pre-sorted data WITH sort order info (tests sort elimination optimization)
+
 # H2O.ai Benchmarks (Group By, Join, Window)
 h2o_small:                      h2oai benchmark with small dataset (1e7 rows) for groupby,  default file format is csv
 h2o_medium:                     h2oai benchmark with medium dataset (1e8 rows) for groupby, default file format is csv
@@ -322,6 +325,9 @@ main() {
                 compile_profile)
                     data_tpch "1"
                     ;;
+                data_sorted_clickbench)
+                    data_sorted_clickbench
+                    ;;
                 *)
                     echo "Error: unknown benchmark '$BENCHMARK' for data generation"
                     usage
@@ -504,6 +510,9 @@ main() {
                     ;;
                 compile_profile)
                     run_compile_profile "${PROFILE_ARGS[@]}"
+                    ;;
+                data_sorted_clickbench)
+                    run_data_sorted_clickbench
                     ;;
                 *)
                     echo "Error: unknown benchmark '$BENCHMARK' for run"
@@ -1195,6 +1204,86 @@ compare_benchmarks() {
         fi
     done
 
+}
+
+# Sorted Data Benchmark Functions (Optimized for hits_0.parquet)
+# Add these functions to bench.sh
+
+# Creates sorted ClickBench data from hits_0.parquet (partitioned dataset)
+# The data is sorted by EventTime in ascending order
+# Using hits_0.parquet (~150MB) instead of full hits.parquet (~14GB) for faster testing
+data_sorted_clickbench() {
+    SORTED_FILE="${DATA_DIR}/hits_0_sorted.parquet"
+    ORIGINAL_FILE="${DATA_DIR}/hits_partitioned/hits_0.parquet"
+
+    echo "Creating sorted ClickBench dataset from hits_0.parquet..."
+
+    # Check if partitioned data exists
+    if [ ! -f "${ORIGINAL_FILE}" ]; then
+        echo "hits_partitioned/hits_0.parquet not found. Running data_clickbench_partitioned first..."
+        data_clickbench_partitioned
+    fi
+
+    # Check if sorted file already exists
+    if [ -f "${SORTED_FILE}" ]; then
+        echo "Sorted hits_0.parquet already exists at ${SORTED_FILE}"
+        return 0
+    fi
+
+    echo "Sorting hits_0.parquet by EventTime (this takes ~10 seconds)..."
+
+    # Ensure virtual environment exists and has pyarrow
+    if [ ! -d "$VIRTUAL_ENV" ]; then
+        echo "Creating virtual environment at $VIRTUAL_ENV..."
+        python3 -m venv "$VIRTUAL_ENV"
+    fi
+
+    # Activate virtual environment
+    source "$VIRTUAL_ENV/bin/activate"
+
+    # Check and install pyarrow if needed
+    if ! python3 -c "import pyarrow" 2>/dev/null; then
+        echo "Installing pyarrow (this may take a minute)..."
+        pip install --quiet pyarrow
+    fi
+
+    # Use the standalone Python script to sort
+    python3 "${SCRIPT_DIR}"/sort_clickbench.py "${ORIGINAL_FILE}" "${SORTED_FILE}"
+    local result=$?
+
+    # Deactivate virtual environment
+    deactivate
+
+    if [ $result -eq 0 ]; then
+        echo "✓ Successfully created sorted ClickBench dataset"
+        return 0
+    else
+        echo "✗ Error: Failed to create sorted dataset"
+        return 1
+    fi
+}
+
+# Sorted Data Benchmark Functions for bench.sh
+# Add these functions to your bench.sh script
+
+# Runs the sorted data benchmark (sorted only) with sort order information
+run_data_sorted_clickbench() {
+    RESULTS_FILE="${RESULTS_DIR}/data_sorted_clickbench.json"
+    echo "RESULTS_FILE: ${RESULTS_FILE}"
+    echo "Running sorted data benchmark (sorted only) with sort order optimization..."
+
+    # Ensure sorted data exists
+    data_sorted_clickbench
+
+    # Run benchmark with --sorted-by parameter to inform DataFusion about the sort order
+    debug_run $CARGO_COMMAND --bin dfbench -- clickbench \
+        --iterations 5 \
+        --path "${DATA_DIR}/hits_0_sorted.parquet" \
+        --queries-path "${SCRIPT_DIR}/queries/clickbench/queries/sorted_data" \
+        --sorted-by "EventTime" \
+        --sort-order "ASC" \
+        -o "${RESULTS_FILE}" \
+        ${QUERY_ARG}
 }
 
 setup_venv() {
