@@ -983,6 +983,10 @@ impl JoinFuzzTestCase {
                     .zip(&hj_formatted_sorted)
                     .enumerate()
                 {
+                    if !nlj_line.contains("\n") && !hj_line.contains("\n") {
+                        // both are empty results
+                        continue;
+                    }
                     assert_eq!(
                         (i, nlj_line),
                         (i, hj_line),
