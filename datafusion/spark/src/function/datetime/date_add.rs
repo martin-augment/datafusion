@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use arrow::array::ArrayRef;
 use arrow::compute;
-use arrow::datatypes::{DataType, Date32Type};
+use arrow::datatypes::{DataType, Date32Type, Field, FieldRef};
 use arrow::error::ArrowError;
 use datafusion_common::cast::{
     as_date32_array, as_int16_array, as_int32_array, as_int8_array,
@@ -28,8 +28,8 @@ use datafusion_common::cast::{
 use datafusion_common::utils::take_function_args;
 use datafusion_common::{internal_err, Result};
 use datafusion_expr::{
-    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature,
-    Volatility,
+    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
+    TypeSignature, Volatility,
 };
 use datafusion_functions::utils::make_scalar_function;
 
@@ -79,7 +79,16 @@ impl ScalarUDFImpl for SparkDateAdd {
     }
 
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Date32)
+        internal_err!("Use return_field_from_args in this case instead.")
+    }
+
+    fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
+        let nullable = args.arg_fields.iter().any(|f| f.is_nullable());
+        Ok(Arc::new(Field::new(
+            self.name(),
+            DataType::Date32,
+            nullable,
+        )))
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
@@ -135,4 +144,49 @@ fn spark_date_add(args: &[ArrayRef]) -> Result<ArrayRef> {
         }
     };
     Ok(Arc::new(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::datatypes::Field;
+
+    #[test]
+    fn test_date_add_non_nullable_inputs() {
+        let func = SparkDateAdd::new();
+        let args = &[
+            Arc::new(Field::new("arg_int8", DataType::Int8, false)),
+            Arc::new(Field::new("arg_int16", DataType::Int16, false)),
+        ];
+
+        let ret_field = func
+            .return_field_from_args(ReturnFieldArgs {
+                arg_fields: args,
+                scalar_arguments: &[None, None],
+            })
+            .unwrap();
+
+        assert_eq!(ret_field.data_type(), &DataType::Date32);
+        assert!(!ret_field.is_nullable());
+    }
+
+    #[test]
+    fn test_date_add_nullable_inputs() {
+        let func = SparkDateAdd::new();
+        let args = &[
+            Arc::new(Field::new("arg_int8", DataType::Int8, false)),
+            Arc::new(Field::new("arg_int16", DataType::Int16, true)),
+            Arc::new(Field::new("arg_int32", DataType::Int32, false)),
+        ];
+
+        let ret_field = func
+            .return_field_from_args(ReturnFieldArgs {
+                arg_fields: args,
+                scalar_arguments: &[None, None, None],
+            })
+            .unwrap();
+
+        assert_eq!(ret_field.data_type(), &DataType::Date32);
+        assert!(ret_field.is_nullable());
+    }
 }
