@@ -25,9 +25,8 @@ use std::sync::Arc;
 use crate::file_groups::FileGroupPartitioner;
 use crate::file_scan_config::FileScanConfig;
 use crate::file_stream::FileOpener;
-use crate::schema_adapter::SchemaAdapterFactory;
+use datafusion_common::Result;
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{Result, not_impl_err};
 use datafusion_physical_expr::projection::ProjectionExprs;
 use datafusion_physical_expr::{LexOrdering, PhysicalExpr};
 use datafusion_physical_plan::DisplayFormatType;
@@ -156,31 +155,5 @@ pub trait FileSource: Send + Sync {
         _projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>> {
         Ok(None)
-    }
-
-    /// Set optional schema adapter factory.
-    ///
-    /// [`SchemaAdapterFactory`] allows user to specify how fields from the
-    /// file get mapped to that of the table schema.  If you implement this
-    /// method, you should also implement [`schema_adapter_factory`].
-    ///
-    /// The default implementation returns a not implemented error.
-    ///
-    /// [`schema_adapter_factory`]: Self::schema_adapter_factory
-    fn with_schema_adapter_factory(
-        &self,
-        _factory: Arc<dyn SchemaAdapterFactory>,
-    ) -> Result<Arc<dyn FileSource>> {
-        not_impl_err!(
-            "FileSource {} does not support schema adapter factory",
-            self.file_type()
-        )
-    }
-
-    /// Returns the current schema adapter factory if set
-    ///
-    /// Default implementation returns `None`.
-    fn schema_adapter_factory(&self) -> Option<Arc<dyn SchemaAdapterFactory>> {
-        None
     }
 }
