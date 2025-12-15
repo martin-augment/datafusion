@@ -51,7 +51,6 @@ use std::{
 pub struct TestOpener {
     batches: Vec<RecordBatch>,
     batch_size: Option<usize>,
-    schema: SchemaRef,
     projection: Option<Vec<usize>>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
 }
@@ -137,7 +136,6 @@ impl FileSource for TestSource {
         Ok(Arc::new(TestOpener {
             batches: self.batches.clone(),
             batch_size: self.batch_size,
-            schema: Arc::clone(&self.schema),
             projection: self.projection.clone(),
             predicate: self.predicate.clone(),
         }))
