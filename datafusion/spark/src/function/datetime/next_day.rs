@@ -18,12 +18,13 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, AsArray, Date32Array, StringArrayType, new_null_array};
-use arrow::datatypes::{DataType, Date32Type};
+use arrow::array::{new_null_array, ArrayRef, AsArray, Date32Array, StringArrayType};
+use arrow::datatypes::{DataType, Date32Type, Field, FieldRef};
 use chrono::{Datelike, Duration, Weekday};
-use datafusion_common::{Result, ScalarValue, exec_err};
+use datafusion_common::{exec_err, internal_err, Result, ScalarValue};
 use datafusion_expr::{
-    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
+    Volatility,
 };
 
 /// <https://spark.apache.org/docs/latest/api/sql/index.html#next_day>
@@ -63,7 +64,27 @@ impl ScalarUDFImpl for SparkNextDay {
     }
 
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Date32)
+        internal_err!("return_field_from_args should be used instead")
+    }
+
+    fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
+        let [date_field, weekday_field] = args.arg_fields else {
+            return internal_err!("Spark `next_day` expects exactly two arguments");
+        };
+
+        let nullable =
+            date_field.is_nullable()
+                || weekday_field.is_nullable()
+                || args
+                    .scalar_arguments
+                    .iter()
+                    .any(|arg| matches!(arg, Some(v) if v.is_null()));
+
+        Ok(Arc::new(Field::new(
+            self.name(),
+            DataType::Date32,
+            nullable,
+        )))
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
@@ -90,8 +111,6 @@ impl ScalarUDFImpl for SparkNextDay {
                                     spark_next_day(*days, day_of_week.as_str()),
                                 )))
                             } else {
-                                // TODO: if spark.sql.ansi.enabled is false,
-                                //  returns NULL instead of an error for a malformed dayOfWeek.
                                 Ok(ColumnarValue::Scalar(ScalarValue::Date32(None)))
                             }
                         } else {
@@ -120,8 +139,6 @@ impl ScalarUDFImpl for SparkNextDay {
                                 .with_data_type(DataType::Date32);
                             Ok(ColumnarValue::Array(Arc::new(result) as ArrayRef))
                         } else {
-                            // TODO: if spark.sql.ansi.enabled is false,
-                            //  returns NULL instead of an error for a malformed dayOfWeek.
                             Ok(ColumnarValue::Array(Arc::new(new_null_array(
                                 &DataType::Date32,
                                 date_array.len(),
@@ -147,32 +164,31 @@ impl ScalarUDFImpl for SparkNextDay {
                             date_array.as_primitive::<Date32Type>();
                         match day_of_week_array.data_type() {
                             DataType::Utf8 => {
-                                let day_of_week_array =
-                                    day_of_week_array.as_string::<i32>();
-                                process_next_day_arrays(date_array, day_of_week_array)
-                            }
-                            DataType::LargeUtf8 => {
-                                let day_of_week_array =
-                                    day_of_week_array.as_string::<i64>();
-                                process_next_day_arrays(date_array, day_of_week_array)
-                            }
-                            DataType::Utf8View => {
-                                let day_of_week_array =
-                                    day_of_week_array.as_string_view();
-                                process_next_day_arrays(date_array, day_of_week_array)
-                            }
-                            other => {
-                                exec_err!(
-                                    "Spark `next_day` function: second arg must be string. Got {other:?}"
+                                process_next_day_arrays(
+                                    date_array,
+                                    day_of_week_array.as_string::<i32>(),
                                 )
                             }
+                            DataType::LargeUtf8 => {
+                                process_next_day_arrays(
+                                    date_array,
+                                    day_of_week_array.as_string::<i64>(),
+                                )
+                            }
+                            DataType::Utf8View => {
+                                process_next_day_arrays(
+                                    date_array,
+                                    day_of_week_array.as_string_view(),
+                                )
+                            }
+                            other => exec_err!(
+                                "Spark `next_day` function: second arg must be string. Got {other:?}"
+                            ),
                         }
                     }
-                    (left, right) => {
-                        exec_err!(
-                            "Spark `next_day` function: first arg must be date, second arg must be string. Got {left:?}, {right:?}"
-                        )
-                    }
+                    (left, right) => exec_err!(
+                        "Spark `next_day` function: first arg must be date, second arg must be string. Got {left:?}, {right:?}"
+                    ),
                 }?;
                 Ok(ColumnarValue::Array(result))
             }
@@ -191,57 +207,84 @@ where
     let result = date_array
         .iter()
         .zip(day_of_week_array.iter())
-        .map(|(days, day_of_week)| {
-            if let Some(days) = days {
-                if let Some(day_of_week) = day_of_week {
-                    spark_next_day(days, day_of_week)
-                } else {
-                    // TODO: if spark.sql.ansi.enabled is false,
-                    //  returns NULL instead of an error for a malformed dayOfWeek.
-                    None
-                }
-            } else {
-                None
-            }
+        .map(|(days, day_of_week)| match (days, day_of_week) {
+            (Some(days), Some(day_of_week)) => spark_next_day(days, day_of_week),
+            _ => None,
         })
         .collect::<Date32Array>();
+
     Ok(Arc::new(result) as ArrayRef)
 }
 
 fn spark_next_day(days: i32, day_of_week: &str) -> Option<i32> {
     let date = Date32Type::to_naive_date(days);
 
-    let day_of_week = day_of_week.trim().to_uppercase();
-    let day_of_week = match day_of_week.as_str() {
-        "MO" | "MON" | "MONDAY" => Some("MONDAY"),
-        "TU" | "TUE" | "TUESDAY" => Some("TUESDAY"),
-        "WE" | "WED" | "WEDNESDAY" => Some("WEDNESDAY"),
-        "TH" | "THU" | "THURSDAY" => Some("THURSDAY"),
-        "FR" | "FRI" | "FRIDAY" => Some("FRIDAY"),
-        "SA" | "SAT" | "SATURDAY" => Some("SATURDAY"),
-        "SU" | "SUN" | "SUNDAY" => Some("SUNDAY"),
-        _ => {
-            // TODO: if spark.sql.ansi.enabled is false,
-            //  returns NULL instead of an error for a malformed dayOfWeek.
-            None
-        }
+    let day_of_week = match day_of_week.trim().to_uppercase().as_str() {
+        "MO" | "MON" | "MONDAY" => Weekday::Mon,
+        "TU" | "TUE" | "TUESDAY" => Weekday::Tue,
+        "WE" | "WED" | "WEDNESDAY" => Weekday::Wed,
+        "TH" | "THU" | "THURSDAY" => Weekday::Thu,
+        "FR" | "FRI" | "FRIDAY" => Weekday::Fri,
+        "SA" | "SAT" | "SATURDAY" => Weekday::Sat,
+        "SU" | "SUN" | "SUNDAY" => Weekday::Sun,
+        _ => return None,
     };
 
-    if let Some(day_of_week) = day_of_week {
-        let day_of_week = day_of_week.parse::<Weekday>();
-        match day_of_week {
-            Ok(day_of_week) => Some(Date32Type::from_naive_date(
-                date + Duration::days(
-                    (7 - date.weekday().days_since(day_of_week)) as i64,
-                ),
-            )),
-            Err(_) => {
-                // TODO: if spark.sql.ansi.enabled is false,
-                //  returns NULL instead of an error for a malformed dayOfWeek.
-                None
-            }
-        }
-    } else {
-        None
+    Some(Date32Type::from_naive_date(
+        date + Duration::days((7 - date.weekday().days_since(day_of_week)) as i64),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion_expr::ReturnFieldArgs;
+
+    #[test]
+    fn return_type_is_not_used() {
+        let func = SparkNextDay::new();
+        let err = func
+            .return_type(&[DataType::Date32, DataType::Utf8])
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("return_field_from_args should be used instead"));
+    }
+
+    #[test]
+    fn next_day_nullability_derived_from_inputs() {
+        let func = SparkNextDay::new();
+
+        let non_nullable_date =
+            Arc::new(Field::new("date", DataType::Date32, false));
+        let non_nullable_weekday =
+            Arc::new(Field::new("weekday", DataType::Utf8, false));
+
+        let field = func
+            .return_field_from_args(ReturnFieldArgs {
+                arg_fields: &[
+                    Arc::clone(&non_nullable_date),
+                    Arc::clone(&non_nullable_weekday),
+                ],
+                scalar_arguments: &[None, None],
+            })
+            .unwrap();
+
+        assert!(!field.is_nullable());
+
+        let nullable_date =
+            Arc::new(Field::new("date", DataType::Date32, true));
+
+        let field = func
+            .return_field_from_args(ReturnFieldArgs {
+                arg_fields: &[
+                    Arc::clone(&nullable_date),
+                    Arc::clone(&non_nullable_weekday),
+                ],
+                scalar_arguments: &[None, None],
+            })
+            .unwrap();
+
+        assert!(field.is_nullable());
     }
 }
