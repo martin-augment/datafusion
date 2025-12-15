@@ -103,7 +103,6 @@ pub struct TestSource {
     predicate: Option<Arc<dyn PhysicalExpr>>,
     batch_size: Option<usize>,
     batches: Vec<RecordBatch>,
-    schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
     projection: Option<Vec<usize>>,
     table_schema: datafusion_datasource::TableSchema,
@@ -114,7 +113,6 @@ impl TestSource {
         let table_schema =
             datafusion_datasource::TableSchema::new(Arc::clone(&schema), vec![]);
         Self {
-            schema,
             support,
             metrics: ExecutionPlanMetricsSet::new(),
             batches,
