@@ -112,12 +112,14 @@ impl PowerFunc {
 ///   2.5 is represented as 25 with scale 1
 ///   The unscaled result is 25^4 = 390625
 ///   Scale it back to 1: 390625 / 10^4 = 39
-///
-/// Returns error if base is invalid
 fn pow_decimal_int<T>(base: T, scale: i8, exp: i64) -> Result<T, ArrowError>
 where
     T: From<i32> + ArrowNativeTypeOp,
 {
+    if exp < 0 {
+        return pow_decimal_float(base, scale, exp as f64);
+    }
+
     let scale: u32 = scale.try_into().map_err(|_| {
         ArrowError::NotYetImplemented(format!(
             "Negative scale is not yet supported value: {scale}"
@@ -149,22 +151,112 @@ where
 
 /// Binary function to calculate a math power to float exponent
 /// for scaled integer types.
-/// Returns error if exponent is negative or non-integer, or base invalid
 fn pow_decimal_float<T>(base: T, scale: i8, exp: f64) -> Result<T, ArrowError>
 where
     T: From<i32> + ArrowNativeTypeOp,
 {
-    if !exp.is_finite() || exp.trunc() != exp {
+    if exp.is_finite() && exp.trunc() == exp && exp >= 0f64 && exp < u32::MAX as f64 {
+        return pow_decimal_int(base, scale, exp as i64);
+    }
+
+    if !exp.is_finite() {
         return Err(ArrowError::ComputeError(format!(
-            "Cannot use non-integer exp: {exp}"
+            "Cannot use non-finite exp: {exp}"
         )));
     }
-    if exp < 0f64 || exp >= u32::MAX as f64 {
+
+    pow_decimal_float_fallback(base, scale, exp)
+}
+
+/// Fallback implementation using f64 for negative or non-integer exponents.
+/// This handles cases that cannot be computed using integer arithmetic.
+fn pow_decimal_float_fallback<T>(base: T, scale: i8, exp: f64) -> Result<T, ArrowError>
+where
+    T: From<i32> + ArrowNativeTypeOp,
+{
+    let scale_factor = 10f64.powi(scale as i32);
+    let base_f64 = format!("{base:?}")
+        .parse::<f64>()
+        .map(|v| v / scale_factor)
+        .map_err(|_| {
+            ArrowError::ComputeError(format!("Cannot convert base {base:?} to f64"))
+        })?;
+
+    let result_f64 = base_f64.powf(exp);
+
+    if !result_f64.is_finite() {
         return Err(ArrowError::ArithmeticOverflow(format!(
-            "Unsupported exp value: {exp}"
+            "Result of {base_f64}^{exp} is not finite"
         )));
     }
-    pow_decimal_int(base, scale, exp as i64)
+
+    let result_scaled = result_f64 * scale_factor;
+    let result_rounded = result_scaled.round();
+
+    if result_rounded.abs() > i128::MAX as f64 {
+        return Err(ArrowError::ArithmeticOverflow(format!(
+            "Result {result_rounded} is too large for the target decimal type"
+        )));
+    }
+
+    decimal_from_i128::<T>(result_rounded as i128)
+}
+
+fn decimal_from_i128<T>(value: i128) -> Result<T, ArrowError>
+where
+    T: From<i32> + ArrowNativeTypeOp,
+{
+    if value == 0 {
+        return Ok(T::from(0));
+    }
+
+    if value >= i32::MIN as i128 && value <= i32::MAX as i128 {
+        return Ok(T::from(value as i32));
+    }
+
+    let is_negative = value < 0;
+    let abs_value = value.unsigned_abs();
+
+    let billion = 1_000_000_000u128;
+    let mut result = T::from(0);
+    let mut multiplier = T::from(1);
+    let billion_t = T::from(1_000_000_000);
+
+    let mut remaining = abs_value;
+    while remaining > 0 {
+        let chunk = (remaining % billion) as i32;
+        remaining /= billion;
+
+        let chunk_value = T::from(chunk).mul_checked(multiplier).map_err(|_| {
+            ArrowError::ArithmeticOverflow(format!(
+                "Overflow while converting {value} to decimal type"
+            ))
+        })?;
+
+        result = result.add_checked(chunk_value).map_err(|_| {
+            ArrowError::ArithmeticOverflow(format!(
+                "Overflow while converting {value} to decimal type"
+            ))
+        })?;
+
+        if remaining > 0 {
+            multiplier = multiplier.mul_checked(billion_t).map_err(|_| {
+                ArrowError::ArithmeticOverflow(format!(
+                    "Overflow while converting {value} to decimal type"
+                ))
+            })?;
+        }
+    }
+
+    if is_negative {
+        result = T::from(0).sub_checked(result).map_err(|_| {
+            ArrowError::ArithmeticOverflow(format!(
+                "Overflow while negating {value} in decimal type"
+            ))
+        })?;
+    }
+
+    Ok(result)
 }
 
 impl ScalarUDFImpl for PowerFunc {
@@ -391,5 +483,39 @@ mod tests {
             pow_decimal_int(25, -1, 4).unwrap_err().to_string(),
             "Not yet implemented: Negative scale is not yet supported value: -1"
         );
+    }
+
+    #[test]
+    fn test_pow_decimal_float_fallback() {
+        // Test negative exponent: 4^(-1) = 0.25
+        // 4 with scale 2 = 400, result should be 25 (0.25 with scale 2)
+        let result: i128 = pow_decimal_float(400i128, 2, -1.0).unwrap();
+        assert_eq!(result, 25);
+
+        // Test non-integer exponent: 4^0.5 = 2
+        // 4 with scale 2 = 400, result should be 200 (2.0 with scale 2)
+        let result: i128 = pow_decimal_float(400i128, 2, 0.5).unwrap();
+        assert_eq!(result, 200);
+
+        // Test 8^(1/3) = 2 (cube root)
+        // 8 with scale 1 = 80, result should be 20 (2.0 with scale 1)
+        let result: i128 = pow_decimal_float(80i128, 1, 1.0 / 3.0).unwrap();
+        assert_eq!(result, 20);
+
+        // Test negative base with integer exponent still works
+        // (-2)^3 = -8
+        // -2 with scale 1 = -20, result should be -80 (-8.0 with scale 1)
+        let result: i128 = pow_decimal_float(-20i128, 1, 3.0).unwrap();
+        assert_eq!(result, -80);
+
+        // Test positive integer exponent goes through fast path
+        // 2.5^4 = 39.0625
+        // 25 with scale 1, result should be 390 (39.0 with scale 1) - truncated
+        let result: i128 = pow_decimal_float(25i128, 1, 4.0).unwrap();
+        assert_eq!(result, 390); // Uses integer path
+
+        // Test non-finite exponent returns error
+        assert!(pow_decimal_float(100i128, 2, f64::NAN).is_err());
+        assert!(pow_decimal_float(100i128, 2, f64::INFINITY).is_err());
     }
 }
