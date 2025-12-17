@@ -116,13 +116,25 @@ fn log_decimal128(value: i128, scale: i8, base: f64) -> Result<f64, ArrowError> 
         )));
     }
 
-    let unscaled_value = decimal128_to_i128(value, scale)?;
-    if unscaled_value > 0 {
-        let log_value: u32 = unscaled_value.ilog(base as i128);
-        Ok(log_value as f64)
+    if scale < 0 {
+        if value > 0 {
+            // Compute actual value: value * 10^(-scale) = value * 10^|scale|
+            let actual_value = (value as f64) * 10.0_f64.powi(-scale as i32);
+            Ok(actual_value.log(base))
+        } else {
+            // Reflect f64::log behaviour
+            Ok(f64::NAN)
+        }
     } else {
-        // Reflect f64::log behaviour
-        Ok(f64::NAN)
+        // For non-negative scales, use existing logic
+        let unscaled_value = decimal128_to_i128(value, scale)?;
+        if unscaled_value > 0 {
+            let log_value: u32 = unscaled_value.ilog(base as i128);
+            Ok(log_value as f64)
+        } else {
+            // Reflect f64::log behaviour
+            Ok(f64::NAN)
+        }
     }
 }
 
@@ -291,43 +303,78 @@ impl ScalarUDFImpl for LogFunc {
         }
         let number = args.pop().unwrap();
         let number_datatype = arg_types.pop().unwrap();
-        // default to base 10
-        let base = if let Some(base) = args.pop() {
-            base
-        } else {
-            lit(ScalarValue::new_ten(&number_datatype)?)
+
+        let has_negative_scale = match &number_datatype {
+            DataType::Decimal32(_, scale)
+            | DataType::Decimal64(_, scale)
+            | DataType::Decimal128(_, scale)
+            | DataType::Decimal256(_, scale) => *scale < 0,
+            _ => false,
         };
 
-        match number {
+        // Get base if provided, otherwise None (will create default base 10 if needed)
+        let base_option = args.pop();
+
+        // Helper to construct result args (used in multiple places)
+        let make_result_args = |base: Expr| -> Result<Vec<Expr>> {
+            Ok(match num_args {
+                1 => vec![number.clone()],
+                2 => vec![base, number.clone()],
+                _ => {
+                    return internal_err!(
+                        "Unexpected number of arguments in log::simplify"
+                    );
+                }
+            })
+        };
+
+        match &number {
             Expr::Literal(value, _)
-                if value == ScalarValue::new_one(&number_datatype)? =>
+                if !has_negative_scale
+                    && *value == ScalarValue::new_one(&number_datatype)? =>
             {
+                let base = base_option.unwrap_or_else(|| {
+                    lit(ScalarValue::new_ten(&number_datatype).unwrap())
+                });
                 Ok(ExprSimplifyResult::Simplified(lit(ScalarValue::new_zero(
                     &info.get_data_type(&base)?,
                 )?)))
             }
-            Expr::ScalarFunction(ScalarFunction { func, mut args })
-                if is_pow(&func) && args.len() == 2 && base == args[0] =>
-            {
-                let b = args.pop().unwrap(); // length checked above
-                Ok(ExprSimplifyResult::Simplified(b))
+            Expr::ScalarFunction(ScalarFunction {
+                func,
+                args: pow_args,
+            }) if !has_negative_scale && is_pow(func) && pow_args.len() == 2 => {
+                let base = base_option.unwrap_or_else(|| {
+                    lit(ScalarValue::new_ten(&number_datatype).unwrap())
+                });
+                if base == pow_args[0] {
+                    Ok(ExprSimplifyResult::Simplified(pow_args[1].clone()))
+                } else {
+                    Ok(ExprSimplifyResult::Original(make_result_args(base)?))
+                }
             }
-            number => {
+            _ => {
+                // Handle negative scale or when simplification doesn't apply
+                if has_negative_scale {
+                    // For 1-arg case, base_option is None, so return early
+                    if base_option.is_none() {
+                        return Ok(ExprSimplifyResult::Original(vec![number.clone()]));
+                    }
+                    // For 2-arg case, use the provided base
+                    let base = base_option.unwrap();
+                    return Ok(ExprSimplifyResult::Original(make_result_args(base)?));
+                }
+
+                let base = base_option.unwrap_or_else(|| {
+                    lit(ScalarValue::new_ten(&number_datatype).unwrap())
+                });
+
                 if number == base {
                     Ok(ExprSimplifyResult::Simplified(lit(ScalarValue::new_one(
                         &number_datatype,
                     )?)))
                 } else {
-                    let args = match num_args {
-                        1 => vec![number],
-                        2 => vec![base, number],
-                        _ => {
-                            return internal_err!(
-                                "Unexpected number of arguments in log::simplify"
-                            );
-                        }
-                    };
-                    Ok(ExprSimplifyResult::Original(args))
+                    Ok(ExprSimplifyResult::Original(make_result_args(base)?))
                 }
             }
         }
