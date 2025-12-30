@@ -216,6 +216,7 @@ where
     StringArrayLen: OffsetSizeTrait,
 {
     let mut builder: GenericStringBuilder<StringArrayLen> = GenericStringBuilder::new();
+    let mut graphemes_buf = Vec::new();
 
     match fill_array {
         None => {
@@ -233,14 +234,17 @@ where
                             if length == 0 {
                                 builder.append_value("");
                             } else {
-                                let graphemes =
-                                    string.graphemes(true).collect::<Vec<&str>>();
-                                if length < graphemes.len() {
-                                    builder.append_value(graphemes[..length].concat());
+                                // Reuse buffer by clearing and refilling
+                                graphemes_buf.clear();
+                                graphemes_buf.extend(string.graphemes(true));
+
+                                if length < graphemes_buf.len() {
+                                    builder
+                                        .append_value(graphemes_buf[..length].concat());
                                 } else {
                                     builder.write_str(string)?;
                                     builder.write_str(
-                                        &" ".repeat(length - graphemes.len()),
+                                        &" ".repeat(length - graphemes_buf.len()),
                                     )?;
                                     builder.append_value("");
                                 }
@@ -268,18 +272,20 @@ where
                                     );
                                 }
                                 let length = if length < 0 { 0 } else { length as usize };
-                                let graphemes =
-                                    string.graphemes(true).collect::<Vec<&str>>();
+                                // Reuse buffer by clearing and refilling
+                                graphemes_buf.clear();
+                                graphemes_buf.extend(string.graphemes(true));
 
-                                if length < graphemes.len() {
-                                    builder.append_value(graphemes[..length].concat());
+                                if length < graphemes_buf.len() {
+                                    builder
+                                        .append_value(graphemes_buf[..length].concat());
                                 } else if fill.is_empty() {
                                     builder.append_value(string);
                                 } else {
                                     builder.write_str(string)?;
                                     fill.chars()
                                         .cycle()
-                                        .take(length - graphemes.len())
+                                        .take(length - graphemes_buf.len())
                                         .for_each(|ch| builder.write_char(ch).unwrap());
                                     builder.append_value("");
                                 }
