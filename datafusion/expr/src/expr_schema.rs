@@ -66,17 +66,11 @@ pub trait ExprSchemable {
 }
 
 impl ExprSchemable for Expr {
-    /// Returns the [arrow::datatypes::DataType] of the expression
-    /// based on [ExprSchema]
+    /// Determine the Arrow DataType of the expression using the provided schema.
     ///
-    /// Note: [`DFSchema`] implements [ExprSchema].
-    ///
-    /// [`DFSchema`]: datafusion_common::DFSchema
+    /// The schema must implement `ExprSchema` (for example, `datafusion_common::DFSchema`).
     ///
     /// # Examples
-    ///
-    /// Get the type of an expression that adds 2 columns. Adding an Int32
-    /// and Float32 results in Float32 type
     ///
     /// ```
     /// # use arrow::datatypes::{DataType, Field};
@@ -101,11 +95,9 @@ impl ExprSchemable for Expr {
     ///
     /// # Errors
     ///
-    /// This function errors when it is not possible to compute its
-    /// [arrow::datatypes::DataType].  This happens when e.g. the
-    /// expression refers to a column that does not exist in the
-    /// schema, or when the expression is incorrectly typed
-    /// (e.g. `[utf8] + [bool]`).
+    /// Returns an error when the expression's type cannot be determined, for example when
+    /// the expression refers to a missing column or when operand types are incompatible
+    /// (e.g., adding `Utf8` and `Boolean`).
     #[cfg_attr(feature = "recursive_protection", recursive::recursive)]
     fn get_type(&self, schema: &dyn ExprSchema) -> Result<DataType> {
         match self {
@@ -198,17 +190,29 @@ impl ExprSchemable for Expr {
         }
     }
 
-    /// Returns the nullability of the expression based on [ExprSchema].
+    /// Determine whether the expression can evaluate to NULL given an input schema.
     ///
-    /// Note: [`DFSchema`] implements [ExprSchema].
-    ///
-    /// [`DFSchema`]: datafusion_common::DFSchema
+    /// Uses schema information and expression structure to infer if the expression may produce
+    /// a NULL value at runtime. The provided schema must implement `ExprSchema` (for example,
+    /// `datafusion_common::DFSchema`).
     ///
     /// # Errors
     ///
-    /// This function errors when it is not possible to compute its
-    /// nullability.  This happens when the expression refers to a
-    /// column that does not exist in the schema.
+    /// Returns an error when nullability cannot be computed for the expression, for example
+    /// if the expression references a column that does not exist in the provided schema.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use datafusion_common::DFSchema;
+    /// use crate::expr::Expr;
+    ///
+    /// // `DFSchema` implements `ExprSchema`. Calling `nullable` returns whether the
+    /// // expression may be NULL given the schema.
+    /// let schema = DFSchema::empty();
+    /// let expr = Expr::Literal(/* ... */);
+    /// let may_be_null = expr.nullable(&schema).unwrap();
+    /// ```
     fn nullable(&self, input_schema: &dyn ExprSchema) -> Result<bool> {
         match self {
             Expr::Alias(Alias { expr, .. }) | Expr::Not(expr) | Expr::Negative(expr) => {
@@ -374,56 +378,31 @@ impl ExprSchemable for Expr {
         Ok((field.data_type().clone(), field.is_nullable()))
     }
 
-    /// Returns a [arrow::datatypes::Field] compatible with this expression.
+    /// Produce a schema Field (and optional table reference) that represents this expression.
     ///
-    /// This function converts an expression into a field with appropriate metadata
-    /// and nullability based on the expression type and context. It is the primary
-    /// mechanism for determining field-level schemas.
+    /// The returned Field encodes the expression's resolved data type, nullability, and any
+    /// relevant field metadata, using the provided input schema to resolve column and
+    /// function argument types. The first element of the tuple is an optional table reference
+    /// that scopes the field name when applicable; the second element is the resulting Field
+    /// (wrapped in an Arc).
     ///
-    /// # Field Property Resolution
+    /// # Returns
     ///
-    /// For each expression, the following properties are determined:
+    /// A tuple of `(Option<TableReference>, Arc<Field>)` where the `Option` is the table scope
+    /// for the field name (or `None` when not applicable) and the `Field` describes the
+    /// expression's name, type, nullability, and metadata.
     ///
-    /// ## Data Type Resolution
-    /// - **Column references**: Data type from input schema field
-    /// - **Literals**: Data type inferred from literal value
-    /// - **Aliases**: Data type inherited from the underlying expression (the aliased expression)
-    /// - **Binary expressions**: Result type from type coercion rules
-    /// - **Boolean expressions**: Always a boolean type
-    /// - **Cast expressions**: Target data type from cast operation
-    /// - **Function calls**: Return type based on function signature and argument types
+    /// # Examples
     ///
-    /// ## Nullability Determination
-    /// - **Column references**: Inherit nullability from input schema field
-    /// - **Literals**: Nullable only if literal value is NULL
-    /// - **Aliases**: Inherit nullability from the underlying expression (the aliased expression)
-    /// - **Binary expressions**: Nullable if either operand is nullable
-    /// - **Boolean expressions**: Always non-nullable (IS NULL, EXISTS, etc.)
-    /// - **Cast expressions**: determined by the input expression's nullability rules
-    /// - **Function calls**: Based on function nullability rules and input nullability
-    ///
-    /// ## Metadata Handling
-    /// - **Column references**: Preserve original field metadata from input schema
-    /// - **Literals**: Use explicitly provided metadata, otherwise empty
-    /// - **Aliases**: Merge underlying expr metadata with alias-specific metadata, preferring the alias metadata
-    /// - **Binary expressions**: field metadata is empty
-    /// - **Boolean expressions**: field metadata is empty
-    /// - **Cast expressions**: determined by the input expression's field metadata handling
-    /// - **Scalar functions**: Generate metadata via function's [`return_field_from_args`] method,
-    ///   with the default implementation returning empty field metadata
-    /// - **Aggregate functions**: Generate metadata via function's [`return_field`] method,
-    ///   with the default implementation returning empty field metadata
-    /// - **Window functions**: field metadata is empty
-    ///
-    /// ## Table Reference Scoping
-    /// - Establishes proper qualified field references when columns belong to specific tables
-    /// - Maintains table context for accurate field resolution in multi-table scenarios
-    ///
-    /// So for example, a projected expression `col(c1) + col(c2)` is
-    /// placed in an output field **named** col("c1 + c2")
-    ///
-    /// [`return_field_from_args`]: crate::ScalarUDF::return_field_from_args
-    /// [`return_field`]: crate::AggregateUDF::return_field
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use crate::{Expr, ExprSchema};
+    /// # // `schema` and `expr` are assumed to be available in the real context.
+    /// # let schema: &dyn ExprSchema = unimplemented!();
+    /// # let expr: Expr = unimplemented!();
+    /// let (table_ref, field): (Option<_>, Arc<_>) = expr.to_field(schema).unwrap();
+    /// println!("field name = {}", field.name());
+    /// ```
     fn to_field(
         &self,
         schema: &dyn ExprSchema,
@@ -580,12 +559,22 @@ impl ExprSchemable for Expr {
         ))
     }
 
-    /// Wraps this expression in a cast to a target [arrow::datatypes::DataType].
+    /// Wraps the expression in a cast to the specified Arrow DataType.
+    ///
+    /// If the expression already has the target type, the original expression is returned unchanged.
     ///
     /// # Errors
     ///
-    /// This function errors when it is impossible to cast the
-    /// expression to the target [arrow::datatypes::DataType].
+    /// Returns an error if the expression's type cannot be determined from the provided schema,
+    /// or if the expression cannot be cast to the target `DataType`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Given an expression and a schema, cast the expression to Int64:
+    /// // let casted = expr.cast_to(&arrow::datatypes::DataType::Int64, &schema)?;
+    /// // assert_eq!(casted.get_type(&schema)?, arrow::datatypes::DataType::Int64);
+    /// ```
     fn cast_to(self, cast_to_type: &DataType, schema: &dyn ExprSchema) -> Result<Expr> {
         let this_type = self.get_type(schema)?;
         if this_type == *cast_to_type {
@@ -636,7 +625,17 @@ fn verify_function_arguments<F: UDFCoercionExt>(
     })
 }
 
-/// Returns the innermost [Expr] that is provably null if `expr` is null.
+/// Finds the innermost expression whose nullness guarantees the outer expression is null.
+///
+/// Traverses through `Not`, `Negative`, and `Cast` wrappers and returns the first inner
+/// expression that would be certainly null if the outer expression is null.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Given an expression like CAST(NOT(col) AS Int), this returns the `col` expression.
+/// let inner = unwrap_certainly_null_expr(&Expr::Cast(Box::new(CastExpr { expr: Box::new(Expr::Not(Box::new(Expr::Column("col".into())))), ..Default::default() })));
+/// ```
 fn unwrap_certainly_null_expr(expr: &Expr) -> &Expr {
     match expr {
         Expr::Not(e) => unwrap_certainly_null_expr(e),

@@ -77,6 +77,17 @@ impl Default for MakeArray {
 }
 
 impl MakeArray {
+    /// Creates a new MakeArray with a user-defined immutable signature and default aliases.
+    ///
+    /// The returned value is configured for use as the `make_array` scalar UDF and includes the
+    /// legacy alias `"make_list"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let m = MakeArray::new();
+    /// assert!(m.aliases().contains(&"make_list".to_string()));
+    /// ```
     pub fn new() -> Self {
         Self {
             signature: Signature::user_defined(Volatility::Immutable),
@@ -116,10 +127,32 @@ impl ScalarUDFImpl for MakeArray {
         make_scalar_function(make_array_inner)(&args.args)
     }
 
+    /// Get the function's alias names.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let m = MakeArray::new();
+    /// assert_eq!(m.aliases(), &["make_list".to_string()][..]);
+    /// ```
+    ///
+    /// Returns a slice of alias names for the function.
     fn aliases(&self) -> &[String] {
         &self.aliases
     }
 
+    /// Determine the coerced argument types for `make_array` based on provided input types.
+    ///
+    /// If `arg_types` is empty, returns an empty vector. Otherwise attempts to unify the argument
+    /// types and returns a vector of coerced `DataType` values, or an error if unification fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let udf = MakeArray::default();
+    /// let coerced = udf.coerce_types(&[]).unwrap();
+    /// assert!(coerced.is_empty());
+    /// ```
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
         if arg_types.is_empty() {
             Ok(vec![])
@@ -128,6 +161,18 @@ impl ScalarUDFImpl for MakeArray {
         }
     }
 
+    /// Returns the embedded user-facing documentation for this UDF, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let m = MakeArray::new();
+    /// assert!(m.documentation().is_some());
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Some(&Documentation)` if documentation is present, `None` otherwise.
     fn documentation(&self) -> Option<&Documentation> {
         self.doc()
     }

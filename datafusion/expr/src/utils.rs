@@ -925,16 +925,18 @@ pub fn find_valid_equijoin_key_pair(
     Ok(None)
 }
 
-/// Creates a detailed error message for a function with wrong signature.
+/// Generate a detailed error message when no function signature matches the provided argument types.
 ///
-/// For example, a query like `select round(3.14, 1.1);` would yield:
-/// ```text
-/// Error during planning: No function matches 'round(Float64, Float64)'. You might need to add explicit type casts.
-///     Candidate functions:
-///     round(Float64, Int64)
-///     round(Float32, Int64)
-///     round(Float64)
-///     round(Float32)
+/// The message includes the function name with the supplied argument types, a suggestion to add explicit
+/// casts, and a list of candidate signatures derived from the function's declared type signature.
+///
+/// # Examples
+///
+/// ```
+/// // Constructing a real `Signature` is omitted for brevity; this shows typical usage.
+/// let msg = generate_signature_error_msg("round", sig, &[DataType::Float64, DataType::Float64]);
+/// assert!(msg.contains("No function matches"));
+/// assert!(msg.contains("Candidate functions"));
 /// ```
 #[expect(clippy::needless_pass_by_value)]
 #[deprecated(since = "52.0.0", note = "Internal function")]
@@ -959,15 +961,23 @@ pub fn generate_signature_error_msg(
     )
 }
 
-/// Creates a detailed error message for a function with wrong signature.
+/// Generate a detailed error message when the provided argument types do not match the function's signature.
 ///
-/// For example, a query like `select round(3.14, 1.1);` would yield:
+/// The message includes the provided function name and argument types, a hint about adding explicit casts, and a list of candidate signatures derived from `func_signature`.
+///
+/// # Examples
+///
 /// ```text
 /// Error during planning: No function matches 'round(Float64, Float64)'. You might need to add explicit type casts.
+///
 ///     Candidate functions:
+///
 ///     round(Float64, Int64)
+///
 ///     round(Float32, Int64)
+///
 ///     round(Float64)
+///
 ///     round(Float32)
 /// ```
 pub(crate) fn generate_signature_error_message(

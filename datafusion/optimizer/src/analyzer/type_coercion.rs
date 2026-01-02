@@ -439,6 +439,32 @@ impl<'a> TypeCoercionRewriter<'a> {
 impl TreeNodeRewriter for TypeCoercionRewriter<'_> {
     type Node = Expr;
 
+    /// Rewrites an expression to apply type coercions and to analyze embedded subquery plans using the rewriter's schema.
+    ///
+    /// This method visits a single `Expr` and returns either `Transformed::Yes(new_expr)` when the expression
+    /// has been changed, `Transformed::No(expr)` when no change was needed, or an error when coercion or
+    /// analysis fails. It handles:
+    /// - Subqueries (re-analyzing their plans with `analyze_internal`),
+    /// - Boolean normalization (e.g. `NOT`, `IS TRUE/FALSE/UNKNOWN`),
+    /// - `LIKE`/`ILIKE` coercions,
+    /// - Binary comparisons and arithmetic via `coerce_binary_op`,
+    /// - `BETWEEN`, `IN`/`IN LIST` coercions,
+    /// - `CASE` expressions,
+    /// - Scalar, aggregate, and window UDF argument coercion via `coerce_arguments_for_signature`,
+    /// - Window frame bound coercion for window functions,
+    /// - Returns an error for `Unnest` (which must be rewritten to a plan-level `Unnest` first).
+    ///
+    /// The method does not document or expose internal casting mechanics; it ensures resulting expressions
+    /// are type-compatible according to the current schema held by the rewriter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Illustrative usage (types and imports omitted for brevity):
+    /// // let mut rewriter = TypeCoercionRewriter::new(&schema);
+    /// // let expr = Expr::BinaryExpr(BinaryExpr::new(Box::new(left), Operator::Eq, Box::new(right)));
+    /// // let result = rewriter.f_up(expr).unwrap();
+    /// ```
     fn f_up(&mut self, expr: Expr) -> Result<Transformed<Expr>> {
         match expr {
             Expr::Unnest(_) => not_impl_err!(
@@ -905,10 +931,51 @@ fn get_casted_expr_for_bool_op(expr: Expr, schema: &DFSchema) -> Result<Expr> {
     expr.cast_to(&DataType::Boolean, schema)
 }
 
-/// Returns `expressions` coerced to types compatible with
-/// `signature`, if possible.
+/// Coerces a list of expressions to the argument types required by a UDF signature.
+
 ///
-/// See the module level documentation for more detail on coercion.
+
+/// Given a sequence of input expressions and a UDF-like descriptor implementing
+
+/// `UDFCoercionExt`, determines the target argument types for that signature and
+
+/// casts each expression to the corresponding type when necessary. If `expressions`
+
+/// is empty, it is returned unchanged.
+
+///
+
+/// # Errors
+
+///
+
+/// Returns an error if obtaining the expressions' fields, determining the
+
+/// signature's target types, or performing any required cast fails.
+
+///
+
+/// # Examples
+
+///
+
+/// ```no_run
+
+/// use datafusion_common::DFSchema;
+
+/// use datafusion_expr::{Expr, col};
+
+/// // `func` must implement `UDFCoercionExt` (e.g. a ScalarUDF/AggregateUDF wrapper).
+
+/// // The example below is illustrative and not executable as-is.
+
+/// let schema: DFSchema = /* build schema */;
+
+/// let exprs = vec![col("a")];
+
+/// let coerced = coerce_arguments_for_signature(exprs, &schema, &func)?;
+
+/// ```
 fn coerce_arguments_for_signature<F: UDFCoercionExt>(
     expressions: Vec<Expr>,
     schema: &DFSchema,

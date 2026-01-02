@@ -91,7 +91,17 @@ pub struct NthValue {
 }
 
 impl NthValue {
-    /// Create a new `nth_value` function
+    /// Creates a new NthValue window function instance for the specified kind.
+    ///
+    /// The created instance uses a signature that accepts no arguments, one argument, or two arguments,
+    /// and is marked immutable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let v = NthValue::new(NthValueKind::Nth);
+    /// assert_eq!(v.kind(), NthValueKind::Nth);
+    /// ```
     pub fn new(kind: NthValueKind) -> Self {
         Self {
             signature: Signature::one_of(

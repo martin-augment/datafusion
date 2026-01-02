@@ -525,6 +525,20 @@ impl OddCounter {
         Self { test_state }
     }
 
+    /// Registers the `odd_counter` window UDF (and its alias) into the provided session context.
+    ///
+    /// The registered UDF expects a single `Int64` input and produces an `Int64` output field
+    /// with the same name as the input. The UDF implementation is backed by the provided
+    /// shared `TestState`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Create a session and shared test state, then register the UDWF so it can be used in queries.
+    /// let mut ctx = SessionContext::new();
+    /// let test_state = std::sync::Arc::new(TestState::default());
+    /// register(&mut ctx, test_state);
+    /// ```
     fn register(ctx: &mut SessionContext, test_state: Arc<TestState>) {
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         struct SimpleWindowUDF {

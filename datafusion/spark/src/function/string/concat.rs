@@ -49,6 +49,13 @@ impl Default for SparkConcat {
 }
 
 impl SparkConcat {
+    /// Create a new SparkConcat configured with a user-defined, immutable signature.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _ = SparkConcat::new();
+    /// ```
     pub fn new() -> Self {
         Self {
             signature: Signature::user_defined(Volatility::Immutable),

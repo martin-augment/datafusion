@@ -89,18 +89,43 @@ impl UDFCoercionExt for WindowUDF {
         self.signature()
     }
 
+    /// Delegate to the underlying UDF implementation to compute coerced argument data types.
+    ///
+    /// Given a slice of current argument DataTypes, returns a vector of target DataTypes
+    /// coerced to match the UDF's signature, or an error when coercion is not possible.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // let udf = /* obtain a UDF instance implementing this method */ ;
+    /// // let result = udf.coerce_types(&[DataType::Int32]).unwrap();
+    /// ```
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
         self.coerce_types(arg_types)
     }
 }
 
-/// Performs type coercion for UDF arguments.
+/// Determine the target field types for a UDF given the current argument fields.
 ///
-/// Returns the data types to which each argument must be coerced to
-/// match `signature`.
+/// Computes the data types each input argument must have (possibly unchanged) to satisfy
+/// the UDF's signature and performs coercions when a compatible coercion path exists.
+/// If the current fields already match one of the signature's valid type combinations,
+/// the original fields are returned unchanged. For empty input and non-user-defined
+/// signatures this respects zero-argument support and returns an empty vector or an error
+/// when zero arguments are not allowed.
 ///
-/// For more details on coercion in general, please see the
-/// [`type_coercion`](crate::type_coercion) module.
+/// # Returns
+///
+/// A vector of `FieldRef` whose data types reflect the required types to call `func`.
+/// The returned fields preserve the original fields' metadata (except for updated data types).
+///
+/// # Examples
+///
+/// ```
+/// // Example usage is environment-specific because it requires constructing a UDF
+/// // that implements `UDFCoercionExt`. See the `type_coercion` module and UDF
+/// // implementations for concrete examples used in the crate's tests.
+/// ```
 pub fn fields_with_udf<F: UDFCoercionExt>(
     current_fields: &[FieldRef],
     func: &F,
@@ -148,13 +173,21 @@ pub fn fields_with_udf<F: UDFCoercionExt>(
         .collect())
 }
 
-/// Performs type coercion for scalar function arguments.
+/// Determine the target data types each argument must be coerced to for a scalar UDF.
 ///
-/// Returns the data types to which each argument must be coerced to
-/// match `signature`.
+/// Returns a vector of data types corresponding to the coerced argument types required
+/// to satisfy the UDF's signature. Errors if the current types cannot be coerced to any
+/// valid signature variant.
 ///
-/// For more details on coercion in general, please see the
-/// [`type_coercion`](crate::type_coercion) module.
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use datafusion_expr::types::DataType;
+/// // `scalar_udf` is a prepared ScalarUDF instance and `current` is the current types.
+/// // let coerced = data_types_with_scalar_udf(&current, &scalar_udf)?;
+/// // assert_eq!(coerced.len(), current.len());
+/// ```
 #[deprecated(since = "52.0.0", note = "use fields_with_udf")]
 pub fn data_types_with_scalar_udf(
     current_types: &[DataType],
@@ -170,13 +203,30 @@ pub fn data_types_with_scalar_udf(
         .collect())
 }
 
-/// Performs type coercion for aggregate function arguments.
+/// Determine the coerced target fields for an aggregate UDF's arguments.
 ///
-/// Returns the fields to which each argument must be coerced to
-/// match `signature`.
+/// Returns the list of `FieldRef` each argument must be coerced to in order to
+/// satisfy the UDF's `signature`. Returns an error when the current fields
+/// cannot be coerced to any valid signature variant.
 ///
-/// For more details on coercion in general, please see the
-/// [`type_coercion`](crate::type_coercion) module.
+/// For more details on coercion rules and supported signatures, see the
+/// `type_coercion` module.
+///
+/// # Returns
+///
+/// A `Vec<FieldRef>` containing the target field types for each argument when
+/// coercion is possible, or a `Result::Err` describing why coercion failed.
+///
+/// # Examples
+///
+/// ```no_run
+/// use datafusion_common::Result;
+/// use crate::udf_coercion::fields_with_aggregate_udf;
+/// // Construct or obtain an AggregateUDF `agg_udf` appropriate for your context.
+/// let agg_udf = /* AggregateUDF instance */ unimplemented!();
+/// let current: &[FieldRef] = &[];
+/// let coerced: Result<Vec<FieldRef>> = fields_with_aggregate_udf(current, &agg_udf);
+/// ```
 #[deprecated(since = "52.0.0", note = "use fields_with_udf")]
 pub fn fields_with_aggregate_udf(
     current_fields: &[FieldRef],
@@ -185,13 +235,22 @@ pub fn fields_with_aggregate_udf(
     fields_with_udf(current_fields, func)
 }
 
-/// Performs type coercion for window function arguments.
+/// Determine coerced field types for a window UDF given the current argument fields.
 ///
-/// Returns the data types to which each argument must be coerced to
-/// match `signature`.
+/// Performs coercion so each argument's data type matches the UDF's signature. On success
+/// returns a `Vec<FieldRef>` where each field's data type has been adjusted to satisfy the
+/// function's signature; returns a planning error if the arguments cannot be coerced.
 ///
-/// For more details on coercion in general, please see the
-/// [`type_coercion`](crate::type_coercion) module.
+/// For more details on coercion rules and behaviour, see the `type_coercion` module.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crate::udf::{WindowUDF, fields_with_window_udf};
+/// # use crate::datatypes::FieldRef;
+/// // Given `udf: WindowUDF` and current argument fields `fields: &[FieldRef]`:
+/// // let coerced = fields_with_window_udf(fields, &udf)?;
+/// ```
 #[deprecated(since = "52.0.0", note = "use fields_with_udf")]
 pub fn fields_with_window_udf(
     current_fields: &[FieldRef],
@@ -354,7 +413,23 @@ fn get_valid_types_with_udf<F: UDFCoercionExt>(
     Ok(valid_types)
 }
 
-/// Returns a Vec of all possible valid argument types for the given signature.
+/// Compute all candidate argument-type combinations that satisfy `signature` for the given `current_types`.
+///
+/// The function returns a list of possible type-vectors where each inner `Vec<DataType>` is one valid
+/// assignment of argument types that conforms to `signature`. An inner empty `Vec` is used to signal
+/// that no valid types could be derived for the provided inputs in that branch. The function returns
+/// an `Err` when the provided arguments violate signature arity or are otherwise incompatible with
+/// required signature constraints.
+///
+/// # Examples
+///
+/// ```
+/// # use crate::{get_valid_types, TypeSignature};
+/// # use arrow_schema::DataType;
+/// // For a binary numeric signature, two Int32 arguments remain Int32
+/// let result = get_valid_types("add", &TypeSignature::Numeric(2), &[DataType::Int32, DataType::Int32]).unwrap();
+/// assert_eq!(result, vec![vec![DataType::Int32, DataType::Int32]]);
+/// ```
 fn get_valid_types(
     function_name: &str,
     signature: &TypeSignature,
@@ -796,10 +871,21 @@ fn maybe_data_types_without_coercion(
     Some(new_type)
 }
 
-/// Return true if a value of type `type_from` can be coerced
-/// (losslessly converted) into a value of `type_to`
+/// Determines whether a value of `type_from` can be converted to `type_into` without loss of information.
 ///
-/// See the module level documentation for more detail on coercion.
+/// # Returns
+///
+/// `true` if a value of `type_from` can be coerced to `type_into` without loss, `false` otherwise.
+///
+/// # Examples
+///
+/// ```
+/// use arrow::datatypes::DataType;
+/// // Int16 values can be losslessly coerced to Int32
+/// assert!(can_coerce_from(&DataType::Int32, &DataType::Int16));
+/// // Int32 cannot be losslessly coerced to Int16
+/// assert!(!can_coerce_from(&DataType::Int16, &DataType::Int32));
+/// ```
 #[deprecated(since = "52.0.0", note = "Unused internal function")]
 pub fn can_coerce_from(type_into: &DataType, type_from: &DataType) -> bool {
     if type_into == type_from {

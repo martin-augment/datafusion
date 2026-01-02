@@ -43,6 +43,14 @@ impl Default for SparkArray {
 }
 
 impl SparkArray {
+    /// Creates a new SparkArray UDF configured as user-defined and immutable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let udf = SparkArray::new();
+    /// assert_eq!(udf.name(), "array");
+    /// ```
     pub fn new() -> Self {
         Self {
             signature: Signature::user_defined(Volatility::Immutable),
@@ -96,11 +104,53 @@ impl ScalarUDFImpl for SparkArray {
         )))
     }
 
+    /// Constructs an array value from the provided scalar-function arguments.
+    ///
+    /// # Returns
+    ///
+    /// A `ColumnarValue` containing the produced array (a List array) built from the arguments.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Create an array from zero or more ArrayRef arguments using the same logic
+    /// // that `invoke_with_args` delegates to.
+    /// use std::sync::Arc;
+    /// use datafusion_common::Result;
+    /// use datafusion_expr::ColumnarValue;
+    ///
+    /// // `make_array_inner` is the core builder used by `invoke_with_args`.
+    /// // Here we call it directly with an empty slice to demonstrate usage.
+    /// let result: Result<Arc<dyn std::any::Any>> = (|| {
+    ///     // This mirrors: make_scalar_function(make_array_inner)(args)
+    ///     let arrays: &[std::sync::Arc<dyn arrow::array::Array>] = &[];
+    ///     let array_ref = crate::function::array::spark_array::make_array_inner(arrays)?;
+    ///     // wrap as ColumnarValue::Array
+    ///     let cv = ColumnarValue::Array(array_ref);
+    ///     // Return as any just to satisfy type expectations in this minimal example.
+    ///     Ok(Arc::new(cv) as Arc<dyn std::any::Any>)
+    /// })();
+    /// ```
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let ScalarFunctionArgs { args, .. } = args;
         make_scalar_function(make_array_inner)(args.as_slice())
     }
 
+    /// Determines the target data types to which each argument should be coerced for the `array` function.
+    ///
+    /// If `arg_types` is empty, returns an empty vector. Otherwise returns a vector with the coerced
+    /// element data type for each input so that the resulting array has a single consistent element type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use arrow::datatypes::DataType;
+    /// use crate::SparkArray;
+    ///
+    /// let udf = SparkArray::new();
+    /// let coerced = udf.coerce_types(&[]).unwrap();
+    /// assert_eq!(coerced, Vec::<DataType>::new());
+    /// ```
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
         if arg_types.is_empty() {
             Ok(vec![])
