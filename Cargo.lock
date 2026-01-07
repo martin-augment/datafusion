@@ -2090,6 +2090,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "bytes",
+ "criterion",
  "datafusion-common",
  "datafusion-common-runtime",
  "datafusion-datasource",
