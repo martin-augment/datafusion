@@ -18,10 +18,11 @@
 //! Execution plan for reading line-delimited JSON files
 
 use std::any::Any;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::task::Poll;
 
+use crate::boundary_utils::{DEFAULT_BOUNDARY_WINDOW, get_aligned_bytes};
 use crate::file_format::JsonDecoder;
 
 use datafusion_common::error::{DataFusionError, Result};
@@ -30,9 +31,7 @@ use datafusion_datasource::decoder::{DecoderDeserializer, deserialize_stream};
 use datafusion_datasource::file_compression_type::FileCompressionType;
 use datafusion_datasource::file_stream::{FileOpenFuture, FileOpener};
 use datafusion_datasource::projection::{ProjectionOpener, SplitProjection};
-use datafusion_datasource::{
-    ListingTableUrl, PartitionedFile, RangeCalculation, as_file_source, calculate_range,
-};
+use datafusion_datasource::{ListingTableUrl, PartitionedFile, as_file_source};
 use datafusion_physical_plan::projection::ProjectionExprs;
 use datafusion_physical_plan::{ExecutionPlan, ExecutionPlanProperties};
 
@@ -188,23 +187,51 @@ impl FileOpener for JsonOpener {
         let file_compression_type = self.file_compression_type.to_owned();
 
         Ok(Box::pin(async move {
-            let calculated_range =
-                calculate_range(&partitioned_file, &store, None).await?;
+            let file_size = partitioned_file.object_meta.size as usize;
+            let location = &partitioned_file.object_meta.location;
 
-            let range = match calculated_range {
-                RangeCalculation::Range(None) => None,
-                RangeCalculation::Range(Some(range)) => Some(range.into()),
-                RangeCalculation::TerminateEarly => {
+            let file_range = if file_compression_type.is_compressed() {
+                None
+            } else {
+                partitioned_file.range.clone()
+            };
+
+            if let Some(file_range) = file_range.as_ref() {
+                let raw_start = file_range.start as usize;
+                let raw_end = file_range.end as usize;
+                let aligned_bytes = get_aligned_bytes(
+                    &store,
+                    location,
+                    raw_start,
+                    raw_end,
+                    file_size,
+                    b'\n',
+                    DEFAULT_BOUNDARY_WINDOW,
+                )
+                .await?;
+
+                let Some(bytes) = aligned_bytes else {
+                    return Ok(
+                        futures::stream::poll_fn(move |_| Poll::Ready(None)).boxed()
+                    );
+                };
+
+                if bytes.is_empty() {
                     return Ok(
                         futures::stream::poll_fn(move |_| Poll::Ready(None)).boxed()
                     );
                 }
-            };
 
-            let options = GetOptions {
-                range,
-                ..Default::default()
-            };
+                let reader = ReaderBuilder::new(schema)
+                    .with_batch_size(batch_size)
+                    .build(BufReader::new(Cursor::new(bytes)))?;
+
+                return Ok(futures::stream::iter(reader)
+                    .map(|r| r.map_err(Into::into))
+                    .boxed());
+            }
+
+            let options = GetOptions::default();
 
             let result = store
                 .get_opts(&partitioned_file.object_meta.location, options)
