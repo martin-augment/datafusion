@@ -286,6 +286,7 @@ fn roundtrip_hash_join() -> Result<()> {
                 None,
                 *partition_mode,
                 NullEquality::NullEqualsNothing,
+                false,
             )?))?;
         }
     }
