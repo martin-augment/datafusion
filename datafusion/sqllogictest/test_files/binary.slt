@@ -311,3 +311,27 @@ Foo foo Foo foo
 NULL NULL NULL NULL
 Bar Bar Bar Bar
 FooBar fooBar FooBar fooBar
+
+# implicit coercion from Binary to String
+query TTT
+SELECT
+  cast(binary as varchar) as str,
+  split_part(binary, 'o', 2) as binary_split,
+  split_part(largebinary, 'o', 2) as large_binary_split
+from t;
+----
+Foo (empty) (empty)
+NULL NULL NULL
+Bar (empty) (empty)
+FooBar (empty) (empty)
+
+query T
+SELECT split_part('abc~@~def~@~ghi', arrow_cast('~@~', 'Binary'), 2);
+----
+def
+
+# Reproducer for https://github.com/apache/datafusion/issues/19809
+query T
+SELECT split_part(split_part(arrow_cast('page.html?resolution=1920&more', 'Binary'), 'resolution=', 2), '&', 1);
+----
+1920
