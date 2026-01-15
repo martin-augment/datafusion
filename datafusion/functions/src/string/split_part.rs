@@ -24,7 +24,9 @@ use arrow::array::{AsArray, GenericStringBuilder};
 use arrow::datatypes::DataType;
 use datafusion_common::ScalarValue;
 use datafusion_common::cast::as_int64_array;
-use datafusion_common::types::{NativeType, logical_int64, logical_string};
+use datafusion_common::types::{
+    NativeType, logical_binary, logical_int64, logical_string,
+};
 use datafusion_common::{DataFusionError, Result, exec_datafusion_err, exec_err};
 use datafusion_expr::{
     Coercion, ColumnarValue, Documentation, TypeSignatureClass, Volatility,
@@ -66,8 +68,16 @@ impl SplitPartFunc {
         Self {
             signature: Signature::coercible(
                 vec![
-                    Coercion::new_exact(TypeSignatureClass::Native(logical_string())),
-                    Coercion::new_exact(TypeSignatureClass::Native(logical_string())),
+                    Coercion::new_implicit(
+                        TypeSignatureClass::Native(logical_string()),
+                        vec![TypeSignatureClass::Native(logical_binary())],
+                        NativeType::String,
+                    ),
+                    Coercion::new_implicit(
+                        TypeSignatureClass::Native(logical_string()),
+                        vec![TypeSignatureClass::Native(logical_binary())],
+                        NativeType::String,
+                    ),
                     Coercion::new_implicit(
                         TypeSignatureClass::Native(logical_int64()),
                         vec![TypeSignatureClass::Integer],
