@@ -44,8 +44,8 @@ use crate::joins::utils::{
 use crate::joins::{JoinOn, JoinOnRef, PartitionMode, SharedBitmapBuilder};
 use crate::metrics::{Count, MetricBuilder};
 use crate::projection::{
-    EmbeddedProjection, JoinData, ProjectionExec, try_embed_projection,
-    try_pushdown_through_join,
+    EmbeddedProjection, JoinData, OptionProjectionRef, ProjectionExec,
+    try_embed_projection, try_pushdown_through_join,
 };
 use crate::repartition::REPARTITION_RANDOM_STATE;
 use crate::spill::get_record_batch_memory_size;
@@ -466,7 +466,7 @@ pub struct HashJoinExec {
     /// Execution metrics
     metrics: ExecutionPlanMetricsSet,
     /// The projection indices of the columns in the output schema of join
-    pub projection: Option<Vec<usize>>,
+    pub projection: OptionProjectionRef,
     /// Information of index and left / right placement of columns
     column_indices: Vec<ColumnIndex>,
     /// The equality null-handling behavior of the join algorithm.
@@ -530,7 +530,7 @@ impl HashJoinExec {
         on: JoinOn,
         filter: Option<JoinFilter>,
         join_type: &JoinType,
-        projection: Option<Vec<usize>>,
+        projection: impl Into<OptionProjectionRef>,
         partition_mode: PartitionMode,
         null_equality: NullEquality,
         null_aware: bool,
@@ -566,6 +566,7 @@ impl HashJoinExec {
         let join_schema = Arc::new(join_schema);
 
         //  check if the projection is valid
+        let projection = projection.into();
         can_project(&join_schema, projection.as_ref())?;
 
         let cache = Self::compute_properties(
@@ -686,16 +687,14 @@ impl HashJoinExec {
     }
 
     /// Return new instance of [HashJoinExec] with the given projection.
-    pub fn with_projection(&self, projection: Option<Vec<usize>>) -> Result<Self> {
+    pub fn with_projection(
+        &self,
+        projection: impl Into<OptionProjectionRef>,
+    ) -> Result<Self> {
+        let projection = projection.into();
         //  check if the projection is valid
         can_project(&self.schema(), projection.as_ref())?;
-        let projection = match projection {
-            Some(projection) => match &self.projection {
-                Some(p) => Some(projection.iter().map(|i| p[*i]).collect()),
-                None => Some(projection),
-            },
-            None => None,
-        };
+        let projection = projection.apply_projection(&self.projection);
         Self::try_new(
             Arc::clone(&self.left),
             Arc::clone(&self.right),
@@ -717,7 +716,7 @@ impl HashJoinExec {
         join_type: JoinType,
         on: JoinOnRef,
         mode: PartitionMode,
-        projection: Option<&Vec<usize>>,
+        projection: Option<&[usize]>,
     ) -> Result<PlanProperties> {
         // Calculate equivalence properties:
         let mut eq_properties = join_equivalence_properties(
@@ -769,7 +768,7 @@ impl HashJoinExec {
         if let Some(projection) = projection {
             // construct a map from the input expressions to the output expression of the Projection
             let projection_mapping = ProjectionMapping::from_indices(projection, schema)?;
-            let out_schema = project_schema(schema, Some(projection))?;
+            let out_schema = project_schema(schema, Some(&projection))?;
             output_partitioning =
                 output_partitioning.project(&projection_mapping, &eq_properties);
             eq_properties = eq_properties.project(&projection_mapping, out_schema);
@@ -1181,7 +1180,7 @@ impl ExecutionPlan for HashJoinExec {
         let right_stream = self.right.execute(partition, context)?;
 
         // update column indices to reflect the projection
-        let column_indices_after_projection = match &self.projection {
+        let column_indices_after_projection = match self.projection.as_ref() {
             Some(projection) => projection
                 .iter()
                 .map(|i| self.column_indices[*i].clone())
@@ -1240,7 +1239,7 @@ impl ExecutionPlan for HashJoinExec {
             &self.join_schema,
         )?;
         // Project statistics if there is a projection
-        Ok(stats.project(self.projection.as_ref()))
+        Ok(self.projection.project_stats(stats))
     }
 
     /// Tries to push `projection` down through `hash_join`. If possible, performs the
