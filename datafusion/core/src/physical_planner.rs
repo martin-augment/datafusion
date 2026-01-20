@@ -18,7 +18,7 @@
 //! Planner for [`LogicalPlan`] to [`ExecutionPlan`]
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::datasource::file_format::file_type_to_format;
@@ -1912,24 +1912,48 @@ fn get_physical_expr_pair(
 }
 
 /// Extract filter predicates from a DML input plan (DELETE/UPDATE).
-/// Walks the logical plan tree and collects Filter predicates,
-/// splitting AND conjunctions into individual expressions.
+/// Walks the logical plan tree and collects Filter predicates and any filters
+/// pushed down into TableScan nodes, splitting AND conjunctions into individual expressions.
 /// Column qualifiers are stripped so expressions can be evaluated against
-/// the TableProvider's schema.
+/// the TableProvider's schema. Deduplicates filters to avoid passing the same
+/// predicate twice when filters appear in both Filter and TableScan nodes.
 ///
 fn extract_dml_filters(input: &Arc<LogicalPlan>) -> Result<Vec<Expr>> {
     let mut filters = Vec::new();
 
     input.apply(|node| {
-        if let LogicalPlan::Filter(filter) = node {
-            // Split AND predicates into individual expressions
-            filters.extend(split_conjunction(&filter.predicate).into_iter().cloned());
+        match node {
+            LogicalPlan::Filter(filter) => {
+                // Split AND predicates into individual expressions
+                filters.extend(split_conjunction(&filter.predicate).into_iter().cloned());
+            }
+            LogicalPlan::TableScan(TableScan {
+                filters: scan_filters,
+                ..
+            }) => {
+                for filter in scan_filters {
+                    filters.extend(split_conjunction(filter).into_iter().cloned());
+                }
+            }
+            _ => {}
         }
         Ok(TreeNodeRecursion::Continue)
     })?;
 
-    // Strip table qualifiers from column references
-    filters.into_iter().map(strip_column_qualifiers).collect()
+    // Strip table qualifiers from column references and deduplicate.
+    // Deduplication is necessary because filters may appear in both Filter nodes
+    // and TableScan.filters when the optimizer pushes some predicates down.
+    // We deduplicate by (unqualified) expression to avoid passing the same filter twice.
+    let mut seen_filters = HashSet::new();
+    let deduped = filters
+        .into_iter()
+        .map(strip_column_qualifiers)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|f| seen_filters.insert(f.clone()))
+        .collect();
+
+    Ok(deduped)
 }
 
 /// Strip table qualifiers from column references in an expression.
