@@ -391,8 +391,8 @@ impl Statistics {
     /// For example, if we had statistics for columns `{"a", "b", "c"}`,
     /// projecting to `vec![2, 1]` would return statistics for columns `{"c",
     /// "b"}`.
-    pub fn project(mut self, projection: Option<&Vec<usize>>) -> Self {
-        let Some(projection) = projection else {
+    pub fn project(mut self, projection: Option<&impl AsRef<[usize]>>) -> Self {
+        let Some(projection) = projection.map(AsRef::as_ref) else {
             return self;
         };
 
@@ -410,7 +410,7 @@ impl Statistics {
             .map(Slot::Present)
             .collect();
 
-        for idx in projection {
+        for idx in projection.iter() {
             let next_idx = self.column_statistics.len();
             let slot = std::mem::replace(
                 columns.get_mut(*idx).expect("projection out of bounds"),
@@ -1066,8 +1066,8 @@ mod tests {
 
     #[test]
     fn test_project_none() {
-        let projection = None;
-        let stats = make_stats(vec![10, 20, 30]).project(projection.as_ref());
+        let projection: Option<&Vec<usize>> = None;
+        let stats = make_stats(vec![10, 20, 30]).project(projection);
         assert_eq!(stats, make_stats(vec![10, 20, 30]));
     }
 

@@ -125,7 +125,7 @@ impl From<ProjectionExpr> for (Arc<dyn PhysicalExpr>, String) {
 /// indices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectionExprs {
-    exprs: Vec<ProjectionExpr>,
+    exprs: Arc<[ProjectionExpr]>,
 }
 
 impl std::fmt::Display for ProjectionExprs {
@@ -137,14 +137,16 @@ impl std::fmt::Display for ProjectionExprs {
 
 impl From<Vec<ProjectionExpr>> for ProjectionExprs {
     fn from(value: Vec<ProjectionExpr>) -> Self {
-        Self { exprs: value }
+        Self {
+            exprs: value.into(),
+        }
     }
 }
 
 impl From<&[ProjectionExpr]> for ProjectionExprs {
     fn from(value: &[ProjectionExpr]) -> Self {
         Self {
-            exprs: value.to_vec(),
+            exprs: value.iter().cloned().collect(),
         }
     }
 }
@@ -152,7 +154,7 @@ impl From<&[ProjectionExpr]> for ProjectionExprs {
 impl FromIterator<ProjectionExpr> for ProjectionExprs {
     fn from_iter<T: IntoIterator<Item = ProjectionExpr>>(exprs: T) -> Self {
         Self {
-            exprs: exprs.into_iter().collect::<Vec<_>>(),
+            exprs: exprs.into_iter().collect(),
         }
     }
 }
@@ -164,12 +166,17 @@ impl AsRef<[ProjectionExpr]> for ProjectionExprs {
 }
 
 impl ProjectionExprs {
-    pub fn new<I>(exprs: I) -> Self
-    where
-        I: IntoIterator<Item = ProjectionExpr>,
-    {
+    /// Make a new [`ProjectionExprs`] from expressions iterator.
+    pub fn new(exprs: impl IntoIterator<Item = ProjectionExpr>) -> Self {
         Self {
-            exprs: exprs.into_iter().collect::<Vec<_>>(),
+            exprs: exprs.into_iter().collect(),
+        }
+    }
+
+    /// Make a new [`ProjectionExprs`] from expressions.
+    pub fn from_expressions(exprs: impl Into<Arc<[ProjectionExpr]>>) -> Self {
+        Self {
+            exprs: exprs.into(),
         }
     }
 
@@ -285,13 +292,14 @@ impl ProjectionExprs {
     {
         let exprs = self
             .exprs
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|mut proj| {
                 proj.expr = f(proj.expr)?;
                 Ok(proj)
             })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Self::new(exprs))
+            .collect::<Result<Arc<_>>>()?;
+        Ok(Self::from_expressions(exprs))
     }
 
     /// Apply another projection on top of this projection, returning the combined projection.
@@ -361,7 +369,7 @@ impl ProjectionExprs {
     /// applied on top of this projection.
     pub fn try_merge(&self, other: &ProjectionExprs) -> Result<ProjectionExprs> {
         let mut new_exprs = Vec::with_capacity(other.exprs.len());
-        for proj_expr in &other.exprs {
+        for proj_expr in other.exprs.iter() {
             let new_expr = update_expr(&proj_expr.expr, &self.exprs, true)?
                 .ok_or_else(|| {
                     internal_datafusion_err!(
@@ -607,7 +615,7 @@ impl ProjectionExprs {
     ) -> Result<datafusion_common::Statistics> {
         let mut column_statistics = vec![];
 
-        for proj_expr in &self.exprs {
+        for proj_expr in self.exprs.iter() {
             let expr = &proj_expr.expr;
             let col_stats = if let Some(col) = expr.as_any().downcast_ref::<Column>() {
                 std::mem::take(&mut stats.column_statistics[col.index()])
@@ -751,15 +759,6 @@ impl Projector {
 
     pub fn projection(&self) -> &ProjectionExprs {
         &self.projection
-    }
-}
-
-impl IntoIterator for ProjectionExprs {
-    type Item = ProjectionExpr;
-    type IntoIter = std::vec::IntoIter<ProjectionExpr>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.exprs.into_iter()
     }
 }
 

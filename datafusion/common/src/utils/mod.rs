@@ -70,9 +70,9 @@ use std::thread::available_parallelism;
 /// ```
 pub fn project_schema(
     schema: &SchemaRef,
-    projection: Option<&Vec<usize>>,
+    projection: Option<&impl AsRef<[usize]>>,
 ) -> Result<SchemaRef> {
-    let schema = match projection {
+    let schema = match projection.map(AsRef::as_ref) {
         Some(columns) => Arc::new(schema.project(columns)?),
         None => Arc::clone(schema),
     };

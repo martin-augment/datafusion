@@ -45,7 +45,7 @@ use datafusion_common::config::ConfigOptions;
 use datafusion_common::tree_node::{
     Transformed, TransformedResult, TreeNode, TreeNodeRecursion,
 };
-use datafusion_common::{JoinSide, Result, internal_err};
+use datafusion_common::{JoinSide, Result, internal_err, project_schema};
 use datafusion_execution::TaskContext;
 use datafusion_physical_expr::equivalence::ProjectionMapping;
 use datafusion_physical_expr::projection::Projector;
@@ -136,13 +136,19 @@ impl ProjectionExec {
         E: Into<ProjectionExpr>,
     {
         let input_schema = input.schema();
-        // convert argument to Vec<ProjectionExpr>
-        let expr_vec = expr.into_iter().map(Into::into).collect::<Vec<_>>();
-        let projection = ProjectionExprs::new(expr_vec);
+        let expr_arc = expr.into_iter().map(Into::into).collect::<Arc<_>>();
+        let projection = ProjectionExprs::from_expressions(expr_arc);
         let projector = projection.make_projector(&input_schema)?;
+        Self::try_from_projector(projector, input)
+    }
 
+    fn try_from_projector(
+        projector: Projector,
+        input: Arc<dyn ExecutionPlan>,
+    ) -> Result<Self> {
         // Construct a map from the input expressions to the output expression of the Projection
-        let projection_mapping = projection.projection_mapping(&input_schema)?;
+        let projection_mapping =
+            projector.projection().projection_mapping(&input.schema())?;
         let cache = Self::compute_properties(
             &input,
             &projection_mapping,
@@ -277,8 +283,8 @@ impl ExecutionPlan for ProjectionExec {
         self: Arc<Self>,
         mut children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        ProjectionExec::try_new(
-            self.projector.projection().clone(),
+        ProjectionExec::try_from_projector(
+            self.projector.clone(),
             children.swap_remove(0),
         )
         .map(|p| Arc::new(p) as _)
@@ -495,6 +501,132 @@ impl RecordBatchStream for ProjectionStream {
     /// Get the schema
     fn schema(&self) -> SchemaRef {
         Arc::clone(self.projector.output_schema())
+    }
+}
+
+/// Describes an option immutable reference counted shared projection.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OptionProjectionRef {
+    inner: Option<Arc<[usize]>>,
+}
+
+impl OptionProjectionRef {
+    /// Make a new [`OptionProjectionRef`].
+    pub fn new(inner: Option<impl Into<Arc<[usize]>>>) -> Self {
+        Self {
+            inner: inner.map(Into::into),
+        }
+    }
+
+    /// Project inner.
+    pub fn as_inner(&self) -> &Option<Arc<[usize]>> {
+        &self.inner
+    }
+
+    /// Consume self and return inner.
+    pub fn into_inner(self) -> Option<Arc<[usize]>> {
+        self.inner
+    }
+
+    /// Represent this projection as option slice.
+    pub fn as_ref(&self) -> Option<&[usize]> {
+        self.inner.as_deref()
+    }
+
+    /// Check if the projection is set.
+    pub fn is_some(&self) -> bool {
+        self.inner.is_some()
+    }
+
+    /// Check if the projection is not set.
+    pub fn is_none(&self) -> bool {
+        self.inner.is_none()
+    }
+
+    /// Apply passed `projection` to inner one.
+    ///
+    /// If inner projection is [`None`] then there are no changes.
+    /// Otherwise, if passed `projection` is not [`None`] then it is remapped
+    /// according to the stored one. Otherwise, there are no changes.
+    ///
+    /// # Example
+    ///
+    /// If stored projection is [0, 2] and we call `apply_projection([0, 2, 3])`,
+    /// then the resulting projection will be [0, 3].
+    ///
+    pub fn apply_projection<'a>(
+        self,
+        projection: impl Into<Option<&'a [usize]>>,
+    ) -> Self {
+        let projection = projection.into();
+        let Some(existing_projection) = self.inner else {
+            return self;
+        };
+        let Some(new_projection) = projection else {
+            return Self {
+                inner: Some(existing_projection),
+            };
+        };
+        Self::new(Some(
+            existing_projection
+                .iter()
+                .map(|i| new_projection[*i])
+                .collect::<Arc<[usize]>>(),
+        ))
+    }
+
+    /// Applies an optional projection to a [`SchemaRef`], returning the
+    /// projected schema.
+    pub fn project_schema(&self, schema: &SchemaRef) -> Result<SchemaRef> {
+        project_schema(schema, self.inner.as_deref().as_ref())
+    }
+
+    /// Applies an optional projection to a [`Statistics`], returning the
+    /// projected stats.
+    pub fn project_stats(&self, stats: Statistics) -> Statistics {
+        stats.project(self.inner.as_deref().as_ref())
+    }
+}
+
+impl<'a> From<&'a OptionProjectionRef> for Option<&'a [usize]> {
+    fn from(value: &'a OptionProjectionRef) -> Self {
+        value.inner.as_deref()
+    }
+}
+
+impl From<Vec<usize>> for OptionProjectionRef {
+    fn from(value: Vec<usize>) -> Self {
+        Self::new(Some(value))
+    }
+}
+
+impl From<Option<Vec<usize>>> for OptionProjectionRef {
+    fn from(value: Option<Vec<usize>>) -> Self {
+        Self::new(value)
+    }
+}
+
+impl FromIterator<usize> for OptionProjectionRef {
+    fn from_iter<T: IntoIterator<Item = usize>>(iter: T) -> Self {
+        Self::new(Some(iter.into_iter().collect::<Arc<[usize]>>()))
+    }
+}
+
+impl<T> PartialEq<Option<T>> for OptionProjectionRef
+where
+    T: AsRef<[usize]>,
+{
+    fn eq(&self, other: &Option<T>) -> bool {
+        self.as_ref() == other.as_ref().map(AsRef::as_ref)
+    }
+}
+
+impl<T> PartialEq<Option<T>> for &OptionProjectionRef
+where
+    T: AsRef<[usize]>,
+{
+    fn eq(&self, other: &Option<T>) -> bool {
+        self.as_ref() == other.as_ref().map(AsRef::as_ref)
     }
 }
 
