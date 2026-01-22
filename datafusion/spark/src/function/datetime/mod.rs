@@ -28,6 +28,7 @@ pub mod make_interval;
 pub mod next_day;
 pub mod time_trunc;
 pub mod trunc;
+pub mod unix;
 
 use datafusion_expr::ScalarUDF;
 use datafusion_functions::make_udf_function;
@@ -48,6 +49,10 @@ make_udf_function!(make_interval::SparkMakeInterval, make_interval);
 make_udf_function!(next_day::SparkNextDay, next_day);
 make_udf_function!(time_trunc::SparkTimeTrunc, time_trunc);
 make_udf_function!(trunc::SparkTrunc, trunc);
+make_udf_function!(unix::SparkUnixDate, unix_date);
+make_udf_function!(unix::SparkUnixMicros, unix_micros);
+make_udf_function!(unix::SparkUnixMillis, unix_millis);
+make_udf_function!(unix::SparkUnixSeconds, unix_seconds);
 
 pub mod expr_fn {
     use datafusion_functions::export_functions;
@@ -125,6 +130,26 @@ pub mod expr_fn {
         "Extracts a part of the date or time from a date, time, or timestamp expression.",
         arg1 arg2
     ));
+    export_functions!((
+        unix_date,
+        "Returns the number of days since epoch (1970-01-01) for the given date `dt`.",
+        dt
+    ));
+    export_functions!((
+        unix_micros,
+        "Returns the number of microseconds since epoch (1970-01-01 00:00:00 UTC) for the given timestamp `ts`.",
+        ts
+    ));
+    export_functions!((
+        unix_millis,
+        "Returns the number of milliseconds since epoch (1970-01-01 00:00:00 UTC) for the given timestamp `ts`.",
+        ts
+    ));
+    export_functions!((
+        unix_seconds,
+        "Returns the number of seconds since epoch (1970-01-01 00:00:00 UTC) for the given timestamp `ts`.",
+        ts
+    ));
 }
 
 pub fn functions() -> Vec<Arc<ScalarUDF>> {
@@ -144,5 +169,9 @@ pub fn functions() -> Vec<Arc<ScalarUDF>> {
         second(),
         time_trunc(),
         trunc(),
+        unix_date(),
+        unix_micros(),
+        unix_millis(),
+        unix_seconds(),
     ]
 }
