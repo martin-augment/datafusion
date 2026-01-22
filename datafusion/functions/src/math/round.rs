@@ -24,8 +24,13 @@ use arrow::datatypes::DataType::{
     Decimal32, Decimal64, Decimal128, Decimal256, Float32, Float64,
 };
 use arrow::datatypes::{
-    ArrowNativeTypeOp, DataType, Decimal32Type, Decimal64Type, Decimal128Type,
-    Decimal256Type, Float32Type, Float64Type, Int32Type,
+    ArrowNativeTypeOp, DECIMAL32_MAX_PRECISION, DECIMAL64_MAX_PRECISION,
+    DECIMAL128_MAX_PRECISION, DECIMAL256_MAX_PRECISION, DataType, Decimal32Type,
+    Decimal64Type, Decimal128Type, Decimal256Type, Float32Type, Float64Type, Int32Type,
+    MAX_DECIMAL32_FOR_EACH_PRECISION, MAX_DECIMAL64_FOR_EACH_PRECISION,
+    MAX_DECIMAL128_FOR_EACH_PRECISION, MAX_DECIMAL256_FOR_EACH_PRECISION,
+    MIN_DECIMAL32_FOR_EACH_PRECISION, MIN_DECIMAL64_FOR_EACH_PRECISION,
+    MIN_DECIMAL128_FOR_EACH_PRECISION, MIN_DECIMAL256_FOR_EACH_PRECISION,
 };
 use arrow::error::ArrowError;
 use datafusion_common::types::{
@@ -118,12 +123,28 @@ impl ScalarUDFImpl for RoundFunc {
     }
 
     fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
-        Ok(match arg_types[0].clone() {
+        Ok(match &arg_types[0] {
             Float32 => Float32,
-            dt @ Decimal128(_, _)
-            | dt @ Decimal256(_, _)
-            | dt @ Decimal32(_, _)
-            | dt @ Decimal64(_, _) => dt,
+            // For decimal types, increase precision by 1 to accommodate potential
+            // carry-over from rounding (e.g., 999.9 -> 1000.0 requires an extra digit).
+            // This matches PostgreSQL behavior where ROUND can increase the number
+            // of digits before the decimal point.
+            Decimal32(precision, scale) => {
+                let new_precision = (*precision + 1).min(DECIMAL32_MAX_PRECISION);
+                Decimal32(new_precision, *scale)
+            }
+            Decimal64(precision, scale) => {
+                let new_precision = (*precision + 1).min(DECIMAL64_MAX_PRECISION);
+                Decimal64(new_precision, *scale)
+            }
+            Decimal128(precision, scale) => {
+                let new_precision = (*precision + 1).min(DECIMAL128_MAX_PRECISION);
+                Decimal128(new_precision, *scale)
+            }
+            Decimal256(precision, scale) => {
+                let new_precision = (*precision + 1).min(DECIMAL256_MAX_PRECISION);
+                Decimal256(new_precision, *scale)
+            }
             _ => Float64,
         })
     }
@@ -169,27 +190,38 @@ impl ScalarUDFImpl for RoundFunc {
                     Ok(ColumnarValue::Scalar(ScalarValue::from(rounded)))
                 }
                 ScalarValue::Decimal128(Some(v), precision, scale) => {
+                    // Use increased precision from return_type to avoid overflow
+                    let new_precision = (*precision + 1).min(DECIMAL128_MAX_PRECISION);
                     let rounded = round_decimal(*v, *scale, dp)?;
+                    let validated =
+                        validate_decimal128_precision(rounded, new_precision)?;
                     let scalar =
-                        ScalarValue::Decimal128(Some(rounded), *precision, *scale);
+                        ScalarValue::Decimal128(Some(validated), new_precision, *scale);
                     Ok(ColumnarValue::Scalar(scalar))
                 }
                 ScalarValue::Decimal256(Some(v), precision, scale) => {
+                    let new_precision = (*precision + 1).min(DECIMAL256_MAX_PRECISION);
                     let rounded = round_decimal(*v, *scale, dp)?;
+                    let validated =
+                        validate_decimal256_precision(rounded, new_precision)?;
                     let scalar =
-                        ScalarValue::Decimal256(Some(rounded), *precision, *scale);
+                        ScalarValue::Decimal256(Some(validated), new_precision, *scale);
                     Ok(ColumnarValue::Scalar(scalar))
                 }
                 ScalarValue::Decimal64(Some(v), precision, scale) => {
+                    let new_precision = (*precision + 1).min(DECIMAL64_MAX_PRECISION);
                     let rounded = round_decimal(*v, *scale, dp)?;
+                    let validated = validate_decimal64_precision(rounded, new_precision)?;
                     let scalar =
-                        ScalarValue::Decimal64(Some(rounded), *precision, *scale);
+                        ScalarValue::Decimal64(Some(validated), new_precision, *scale);
                     Ok(ColumnarValue::Scalar(scalar))
                 }
                 ScalarValue::Decimal32(Some(v), precision, scale) => {
+                    let new_precision = (*precision + 1).min(DECIMAL32_MAX_PRECISION);
                     let rounded = round_decimal(*v, *scale, dp)?;
+                    let validated = validate_decimal32_precision(rounded, new_precision)?;
                     let scalar =
-                        ScalarValue::Decimal32(Some(rounded), *precision, *scale);
+                        ScalarValue::Decimal32(Some(validated), new_precision, *scale);
                     Ok(ColumnarValue::Scalar(scalar))
                 }
                 _ => {
@@ -251,6 +283,8 @@ fn round_columnar(
             result as _
         }
         Decimal32(precision, scale) => {
+            // Use increased precision to avoid overflow from rounding carry-over
+            let new_precision = (*precision + 1).min(DECIMAL32_MAX_PRECISION);
             let result = calculate_binary_decimal_math::<
                 Decimal32Type,
                 Int32Type,
@@ -259,13 +293,17 @@ fn round_columnar(
             >(
                 value_array.as_ref(),
                 decimal_places,
-                |v, dp| round_decimal(v, *scale, dp),
-                *precision,
+                |v, dp| {
+                    round_decimal(v, *scale, dp)
+                        .and_then(|r| validate_decimal32_precision(r, new_precision))
+                },
+                new_precision,
                 *scale,
             )?;
             result as _
         }
         Decimal64(precision, scale) => {
+            let new_precision = (*precision + 1).min(DECIMAL64_MAX_PRECISION);
             let result = calculate_binary_decimal_math::<
                 Decimal64Type,
                 Int32Type,
@@ -274,13 +312,17 @@ fn round_columnar(
             >(
                 value_array.as_ref(),
                 decimal_places,
-                |v, dp| round_decimal(v, *scale, dp),
-                *precision,
+                |v, dp| {
+                    round_decimal(v, *scale, dp)
+                        .and_then(|r| validate_decimal64_precision(r, new_precision))
+                },
+                new_precision,
                 *scale,
             )?;
             result as _
         }
         Decimal128(precision, scale) => {
+            let new_precision = (*precision + 1).min(DECIMAL128_MAX_PRECISION);
             let result = calculate_binary_decimal_math::<
                 Decimal128Type,
                 Int32Type,
@@ -289,13 +331,17 @@ fn round_columnar(
             >(
                 value_array.as_ref(),
                 decimal_places,
-                |v, dp| round_decimal(v, *scale, dp),
-                *precision,
+                |v, dp| {
+                    round_decimal(v, *scale, dp)
+                        .and_then(|r| validate_decimal128_precision(r, new_precision))
+                },
+                new_precision,
                 *scale,
             )?;
             result as _
         }
         Decimal256(precision, scale) => {
+            let new_precision = (*precision + 1).min(DECIMAL256_MAX_PRECISION);
             let result = calculate_binary_decimal_math::<
                 Decimal256Type,
                 Int32Type,
@@ -304,8 +350,11 @@ fn round_columnar(
             >(
                 value_array.as_ref(),
                 decimal_places,
-                |v, dp| round_decimal(v, *scale, dp),
-                *precision,
+                |v, dp| {
+                    round_decimal(v, *scale, dp)
+                        .and_then(|r| validate_decimal256_precision(r, new_precision))
+                },
+                new_precision,
                 *scale,
             )?;
             result as _
@@ -330,6 +379,55 @@ where
         ))
     })?;
     Ok((value * factor).round() / factor)
+}
+
+/// Validate that an i32 (Decimal32) value fits within the specified precision.
+/// Uses Arrow's pre-defined MAX/MIN_DECIMAL32_FOR_EACH_PRECISION constants.
+fn validate_decimal32_precision(value: i32, precision: u8) -> Result<i32, ArrowError> {
+    let max = MAX_DECIMAL32_FOR_EACH_PRECISION[precision as usize];
+    let min = MIN_DECIMAL32_FOR_EACH_PRECISION[precision as usize];
+    if value > max || value < min {
+        return Err(ArrowError::ComputeError(format!(
+            "Decimal overflow: rounded value exceeds precision {precision}"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_decimal64_precision(value: i64, precision: u8) -> Result<i64, ArrowError> {
+    let max = MAX_DECIMAL64_FOR_EACH_PRECISION[precision as usize];
+    let min = MIN_DECIMAL64_FOR_EACH_PRECISION[precision as usize];
+    if value > max || value < min {
+        return Err(ArrowError::ComputeError(format!(
+            "Decimal overflow: rounded value exceeds precision {precision}"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_decimal128_precision(value: i128, precision: u8) -> Result<i128, ArrowError> {
+    let max = MAX_DECIMAL128_FOR_EACH_PRECISION[precision as usize];
+    let min = MIN_DECIMAL128_FOR_EACH_PRECISION[precision as usize];
+    if value > max || value < min {
+        return Err(ArrowError::ComputeError(format!(
+            "Decimal overflow: rounded value exceeds precision {precision}"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_decimal256_precision(
+    value: arrow::datatypes::i256,
+    precision: u8,
+) -> Result<arrow::datatypes::i256, ArrowError> {
+    let max = MAX_DECIMAL256_FOR_EACH_PRECISION[precision as usize];
+    let min = MIN_DECIMAL256_FOR_EACH_PRECISION[precision as usize];
+    if value > max || value < min {
+        return Err(ArrowError::ComputeError(format!(
+            "Decimal overflow: rounded value exceeds precision {precision}"
+        )));
+    }
+    Ok(value)
 }
 
 fn round_decimal<V: ArrowNativeTypeOp>(
