@@ -3065,6 +3065,25 @@ config_namespace! {
         /// If not specified, the default level for the compression algorithm is used.
         pub compression_level: Option<u32>, default = None
         pub schema_infer_max_rec: Option<usize>, default = None
+       /// The JSON format to use when reading files.
+       ///
+       /// When `true` (default), expects newline-delimited JSON (NDJSON):
+       /// ```text
+       /// {"key1": 1, "key2": "val"}
+       /// {"key1": 2, "key2": "vals"}
+       /// ```
+       ///
+       /// When `false`, expects JSON array format:
+       /// ```text
+       /// [
+       ///   {"key1": 1, "key2": "val"},
+       ///   {"key1": 2, "key2": "vals"}
+       /// ]
+       /// ```
+       ///
+       /// Note: JSON array format requires loading the entire file into memory.
+       /// For large files, newline-delimited format is recommended.
+        pub newline_delimited: bool, default = true
     }
 }
 
