@@ -22,11 +22,13 @@ pub mod date_part;
 pub mod date_sub;
 pub mod date_trunc;
 pub mod extract;
+pub mod from_utc_timestamp;
 pub mod last_day;
 pub mod make_dt_interval;
 pub mod make_interval;
 pub mod next_day;
 pub mod time_trunc;
+pub mod to_utc_timestamp;
 pub mod trunc;
 
 use datafusion_expr::ScalarUDF;
@@ -42,11 +44,16 @@ make_udf_function!(date_trunc::SparkDateTrunc, date_trunc);
 make_udf_function!(extract::SparkHour, hour);
 make_udf_function!(extract::SparkMinute, minute);
 make_udf_function!(extract::SparkSecond, second);
+make_udf_function!(
+    from_utc_timestamp::SparkFromUtcTimestamp,
+    from_utc_timestamp
+);
 make_udf_function!(last_day::SparkLastDay, last_day);
 make_udf_function!(make_dt_interval::SparkMakeDtInterval, make_dt_interval);
 make_udf_function!(make_interval::SparkMakeInterval, make_interval);
 make_udf_function!(next_day::SparkNextDay, next_day);
 make_udf_function!(time_trunc::SparkTimeTrunc, time_trunc);
+make_udf_function!(to_utc_timestamp::SparkToUtcTimestamp, to_utc_timestamp);
 make_udf_function!(trunc::SparkTrunc, trunc);
 
 pub mod expr_fn {
@@ -101,6 +108,16 @@ pub mod expr_fn {
         arg1 arg2
     ));
     export_functions!((
+        from_utc_timestamp,
+        "Interpret a given timestamp `ts` in UTC timezone and then convert it to timezone `tz`.",
+        ts tz
+    ));
+    export_functions!((
+        to_utc_timestamp,
+        "Interpret a given timestamp `ts` in timezone `tz` and then convert it to UTC timezone.",
+        ts tz
+    ));
+    export_functions!((
         date_diff,
         "Returns the number of days from start `start` to end `end`.",
         end start
@@ -135,6 +152,7 @@ pub fn functions() -> Vec<Arc<ScalarUDF>> {
         date_part(),
         date_sub(),
         date_trunc(),
+        from_utc_timestamp(),
         hour(),
         last_day(),
         make_dt_interval(),
@@ -143,6 +161,7 @@ pub fn functions() -> Vec<Arc<ScalarUDF>> {
         next_day(),
         second(),
         time_trunc(),
+        to_utc_timestamp(),
         trunc(),
     ]
 }
