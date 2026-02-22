@@ -131,8 +131,5 @@ pub fn spark_bin_inner(arg: &[ArrayRef]) -> Result<ArrayRef> {
 }
 
 fn spark_bin(value: i64) -> String {
-    if value == 0 {
-        return "0".to_string();
-    }
     format!("{value:b}")
 }
