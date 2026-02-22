@@ -15,23 +15,42 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# This file was originally created by a porting script from:
-#   https://github.com/lakehq/sail/tree/43b6ed8221de5c4c4adbedbb267ae1351158b43c/crates/sail-spark-connect/tests/gold_data/function
-# This file is part of the implementation of the datafusion-spark function library.
-# For more information, please see:
-#   https://github.com/apache/datafusion/issues/15914
+query I
+SELECT bin(arrow_cast(13, 'Int8'));
+----
+1101
 
-## Original Query: SELECT bin(-13);
-## PySpark 3.5.5 Result: {'bin(-13)': '1111111111111111111111111111111111111111111111111111111111110011', 'typeof(bin(-13))': 'string', 'typeof(-13)': 'int'}
-#query
-#SELECT bin(-13::int);
+query I
+SELECT bin(arrow_cast(-13, 'Int8'));
+----
+1111111111111111111111111111111111111111111111111111111111110011
 
-## Original Query: SELECT bin(13);
-## PySpark 3.5.5 Result: {'bin(13)': '1101', 'typeof(bin(13))': 'string', 'typeof(13)': 'int'}
-#query
-#SELECT bin(13::int);
+query I
+SELECT bin(arrow_cast(256, 'Int16'));
+----
+100000000
 
-## Original Query: SELECT bin(13.3);
-## PySpark 3.5.5 Result: {'bin(13.3)': '1101', 'typeof(bin(13.3))': 'string', 'typeof(13.3)': 'decimal(3,1)'}
-#query
-#SELECT bin(13.3::decimal(3,1));
+query I
+SELECT bin(arrow_cast(-32768, 'Int16'));
+----
+1111111111111111111111111111111111111111111111111000000000000000
+
+query I
+SELECT bin(arrow_cast(-2147483648, 'Int32'));
+----
+1111111111111111111111111111111110000000000000000000000000000000
+
+query I
+SELECT bin(arrow_cast(1073741824, 'Int32'));
+----
+1000000000000000000000000000000
+
+query I
+SELECT bin(arrow_cast(-9223372036854775808, 'Int64'));
+----
+1000000000000000000000000000000000000000000000000000000000000000
+
+query I
+SELECT bin(arrow_cast(9223372036854775807, 'Int64'));
+----
+111111111111111111111111111111111111111111111111111111111111111
