@@ -134,5 +134,5 @@ fn spark_bin(value: i64) -> String {
     if value == 0 {
         return "0".to_string();
     }
-    format!("{:b}", value)
+    format!("{value:b}")
 }
