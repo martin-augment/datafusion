@@ -190,7 +190,6 @@ async fn run_tests() -> Result<()> {
             let m_clone = m.clone();
             let m_style_clone = m_style.clone();
             let filters = options.filters.clone();
-            let timing_debug_slow_files = timing_debug_slow_files;
 
             let relative_path = test_file.relative_path.clone();
             let relative_path_for_timing = test_file.relative_path.clone();
@@ -263,14 +262,12 @@ async fn run_tests() -> Result<()> {
                 };
 
                 let elapsed = file_start.elapsed();
-                if timing_debug_slow_files {
-                    if elapsed.as_secs() > 30 {
-                        eprintln!(
-                            "Slow file: {} took {:.1}s",
-                            relative_path_for_timing.display(),
-                            elapsed.as_secs_f64()
-                        );
-                    }
+                if timing_debug_slow_files && elapsed.as_secs() > 30 {
+                    eprintln!(
+                        "Slow file: {} took {:.1}s",
+                        relative_path_for_timing.display(),
+                        elapsed.as_secs_f64()
+                    );
                 }
 
                 (result, elapsed)
