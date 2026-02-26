@@ -59,6 +59,7 @@ const DATAFUSION_TESTING_TEST_DIRECTORY: &str = "../../datafusion-testing/data/"
 const PG_COMPAT_FILE_PREFIX: &str = "pg_compat_";
 const SQLITE_PREFIX: &str = "sqlite";
 const ERRS_PER_FILE_LIMIT: usize = 10;
+const TIMING_DEBUG_SLOW_FILES_ENV: &str = "SLT_TIMING_DEBUG_SLOW_FILES";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum TimingSummaryMode {
@@ -115,6 +116,7 @@ async fn run_tests() -> Result<()> {
     env_logger::init();
 
     let options: Options = Parser::parse();
+    let timing_debug_slow_files = is_env_truthy(TIMING_DEBUG_SLOW_FILES_ENV);
     if options.list {
         // nextest parses stdout, so print messages to stderr
         eprintln!("NOTICE: --list option unsupported, quitting");
@@ -188,6 +190,7 @@ async fn run_tests() -> Result<()> {
             let m_clone = m.clone();
             let m_style_clone = m_style.clone();
             let filters = options.filters.clone();
+            let timing_debug_slow_files = timing_debug_slow_files;
 
             let relative_path = test_file.relative_path.clone();
             let relative_path_for_timing = test_file.relative_path.clone();
@@ -258,14 +261,16 @@ async fn run_tests() -> Result<()> {
                         .await?
                     }
                 };
-                // Log slow files (>30s) for CI debugging
-                let elapsed = file_start.elapsed();
-                if elapsed.as_secs() > 30 {
-                    eprintln!(
-                        "Slow file: {} took {:.1}s",
-                        relative_path_for_timing.display(),
-                        elapsed.as_secs_f64()
-                    );
+
+                if timing_debug_slow_files {
+                    let elapsed = file_start.elapsed();
+                    if elapsed.as_secs() > 30 {
+                        eprintln!(
+                            "Slow file: {} took {:.1}s",
+                            relative_path_for_timing.display(),
+                            elapsed.as_secs_f64()
+                        );
+                    }
                 }
                 Ok(())
             })
@@ -409,6 +414,17 @@ fn print_timing_summary(
     }
 
     Ok(())
+}
+
+fn is_env_truthy(name: &str) -> bool {
+    std::env::var_os(name)
+        .and_then(|value| value.into_string().ok())
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
 }
 
 async fn run_test_file_substrait_round_trip(

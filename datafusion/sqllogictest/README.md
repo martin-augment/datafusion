@@ -90,6 +90,11 @@ cargo test --test sqllogictests -- --timing-summary full
 SLT_TIMING_SUMMARY=top SLT_TIMING_TOP_N=15 cargo test --test sqllogictests
 ```
 
+```shell
+# Optional debug logging for per-task slow files (>30s), disabled by default
+SLT_TIMING_DEBUG_SLOW_FILES=1 cargo test --test sqllogictests
+```
+
 ## Cookbook: Adding Tests
 
 1. Add queries
