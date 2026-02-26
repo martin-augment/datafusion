@@ -75,6 +75,8 @@ RUST_LOG=debug cargo test --test sqllogictests -- ddl
 The sqllogictest runner can emit deterministic per-file elapsed timings to help
 identify slow test files.
 
+`--timing-top-n` / `SLT_TIMING_TOP_N` must be a positive integer (`>= 1`).
+
 ```shell
 # Show top 10 slowest files (good for CI)
 cargo test --test sqllogictests -- --timing-summary top --timing-top-n 10

@@ -395,7 +395,7 @@ fn print_timing_summary(
         return Ok(());
     }
 
-    let top_n = options.timing_top_n.max(1);
+    let top_n = options.timing_top_n;
     let count = match mode {
         TimingSummaryMode::Off => 0,
         TimingSummaryMode::Auto | TimingSummaryMode::Top => top_n,
@@ -939,7 +939,8 @@ struct Options {
         long,
         env = "SLT_TIMING_TOP_N",
         default_value_t = 10,
-        help = "Number of files to show when timing summary mode is auto/top"
+        value_parser = clap::value_parser!(usize).range(1..),
+        help = "Number of files to show when timing summary mode is auto/top (must be >= 1)"
     )]
     timing_top_n: usize,
 
