@@ -200,7 +200,7 @@ async fn run_tests() -> Result<()> {
                 currently_running_sql_tracker.clone();
             let file_start = Instant::now();
             SpawnedTask::spawn(async move {
-                match (
+                let result = match (
                     options.postgres_runner,
                     options.complete,
                     options.substrait_round_trip,
@@ -215,7 +215,7 @@ async fn run_tests() -> Result<()> {
                             currently_running_sql_tracker_clone,
                             colored_output,
                         )
-                        .await?
+                        .await
                     }
                     (false, false, _) => {
                         run_test_file(
@@ -227,7 +227,7 @@ async fn run_tests() -> Result<()> {
                             currently_running_sql_tracker_clone,
                             colored_output,
                         )
-                        .await?
+                        .await
                     }
                     (false, true, _) => {
                         run_complete_file(
@@ -237,7 +237,7 @@ async fn run_tests() -> Result<()> {
                             m_style_clone,
                             currently_running_sql_tracker_clone,
                         )
-                        .await?
+                        .await
                     }
                     (true, false, _) => {
                         run_test_file_with_postgres(
@@ -248,7 +248,7 @@ async fn run_tests() -> Result<()> {
                             filters.as_ref(),
                             currently_running_sql_tracker_clone,
                         )
-                        .await?
+                        .await
                     }
                     (true, true, _) => {
                         run_complete_file_with_postgres(
@@ -258,12 +258,12 @@ async fn run_tests() -> Result<()> {
                             m_style_clone,
                             currently_running_sql_tracker_clone,
                         )
-                        .await?
+                        .await
                     }
                 };
 
+                let elapsed = file_start.elapsed();
                 if timing_debug_slow_files {
-                    let elapsed = file_start.elapsed();
                     if elapsed.as_secs() > 30 {
                         eprintln!(
                             "Slow file: {} took {:.1}s",
@@ -272,15 +272,21 @@ async fn run_tests() -> Result<()> {
                         );
                     }
                 }
-                Ok(())
+
+                (result, elapsed)
             })
             .join()
             .map(move |result| {
+                let elapsed = match &result {
+                    Ok((_, elapsed)) => *elapsed,
+                    Err(_) => Duration::ZERO,
+                };
+
                 (
-                    result,
+                    result.map(|(thread_result, _)| thread_result),
                     relative_path,
                     currently_running_sql_tracker,
-                    file_start.elapsed(),
+                    elapsed,
                 )
             })
         })
