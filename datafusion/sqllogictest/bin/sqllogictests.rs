@@ -995,7 +995,7 @@ impl Options {
             ColorChoice::Never => false,
             ColorChoice::Auto => {
                 // CARGO_TERM_COLOR takes precedence over auto-detection
-                let cargo_term_color = ColorChoice::from_str(
+                let cargo_term_color = <ColorChoice as FromStr>::from_str(
                     &std::env::var("CARGO_TERM_COLOR")
                         .unwrap_or_else(|_| "auto".to_string()),
                 )
