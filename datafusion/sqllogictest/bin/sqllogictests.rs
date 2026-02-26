@@ -433,6 +433,16 @@ fn is_env_truthy(name: &str) -> bool {
         })
 }
 
+fn parse_timing_top_n(arg: &str) -> std::result::Result<usize, String> {
+    let parsed = arg
+        .parse::<usize>()
+        .map_err(|error| format!("invalid value '{arg}': {error}"))?;
+    if parsed == 0 {
+        return Err("must be >= 1".to_string());
+    }
+    Ok(parsed)
+}
+
 async fn run_test_file_substrait_round_trip(
     test_file: TestFile,
     validator: Validator,
@@ -939,7 +949,7 @@ struct Options {
         long,
         env = "SLT_TIMING_TOP_N",
         default_value_t = 10,
-        value_parser = clap::value_parser!(usize).range(1..),
+        value_parser = parse_timing_top_n,
         help = "Number of files to show when timing summary mode is auto/top (must be >= 1)"
     )]
     timing_top_n: usize,
