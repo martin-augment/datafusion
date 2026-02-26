@@ -70,6 +70,26 @@ cargo test --test sqllogictests -- ddl --complete
 RUST_LOG=debug cargo test --test sqllogictests -- ddl
 ```
 
+### Per-file timing summary
+
+The sqllogictest runner can emit deterministic per-file elapsed timings to help
+identify slow test files.
+
+```shell
+# Show top 10 slowest files (good for CI)
+cargo test --test sqllogictests -- --timing-summary top --timing-top-n 10
+```
+
+```shell
+# Show full per-file timing table
+cargo test --test sqllogictests -- --timing-summary full
+```
+
+```shell
+# Same controls via environment variables
+SLT_TIMING_SUMMARY=top SLT_TIMING_TOP_N=15 cargo test --test sqllogictests
+```
+
 ## Cookbook: Adding Tests
 
 1. Add queries
