@@ -75,6 +75,9 @@ RUST_LOG=debug cargo test --test sqllogictests -- ddl
 The sqllogictest runner can emit deterministic per-file elapsed timings to help
 identify slow test files.
 
+By default (`--timing-summary auto`), timing summary output is disabled in local
+TTY runs and shows a top-slowest summary in non-TTY/CI runs.
+
 `--timing-top-n` / `SLT_TIMING_TOP_N` must be a positive integer (`>= 1`).
 
 ```shell
