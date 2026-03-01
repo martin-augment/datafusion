@@ -84,7 +84,10 @@ impl ParseUrl {
         let url: std::result::Result<Url, ParseError> = Url::parse(value);
         if let Err(ParseError::RelativeUrlWithoutBase) = url {
             return if !value.contains("://") {
-                Ok(None)
+                Ok(match part {
+                    "PATH" | "FILE" => Some(value.to_string()),
+                    _ => None,
+                })
             } else {
                 Err(exec_datafusion_err!(
                     "The url is invalid: {value}. Use `try_parse_url` to tolerate invalid URL and return NULL instead. SQLSTATE: 22P02"
@@ -357,9 +360,23 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_malformed_url_returns_error() -> Result<()> {
-        let got = ParseUrl::parse("notaurl", "HOST", None)?;
-        assert_eq!(got, None);
+    fn test_parse_schemeless_url() -> Result<()> {
+        // Spark's java.net.URI treats schemeless strings as relative URIs
+        // where the entire input becomes the path component
+        assert_eq!(
+            ParseUrl::parse("notaurl", "PATH", None)?,
+            Some("notaurl".to_string())
+        );
+        assert_eq!(
+            ParseUrl::parse("notaurl", "FILE", None)?,
+            Some("notaurl".to_string())
+        );
+        assert_eq!(ParseUrl::parse("notaurl", "HOST", None)?, None);
+        assert_eq!(ParseUrl::parse("notaurl", "PROTOCOL", None)?, None);
+        assert_eq!(ParseUrl::parse("notaurl", "QUERY", None)?, None);
+        assert_eq!(ParseUrl::parse("notaurl", "REF", None)?, None);
+        assert_eq!(ParseUrl::parse("notaurl", "AUTHORITY", None)?, None);
+        assert_eq!(ParseUrl::parse("notaurl", "USERINFO", None)?, None);
         Ok(())
     }
 

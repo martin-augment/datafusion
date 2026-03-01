@@ -91,6 +91,27 @@ SELECT try_parse_url('notaurl', 'host');
 ----
 NULL
 
+# Schemeless URLs: PATH and FILE return the input string (Spark java.net.URI behavior)
+query T
+SELECT try_parse_url('notaurl', 'PATH');
+----
+notaurl
+
+query T
+SELECT try_parse_url('notaurl', 'FILE');
+----
+notaurl
+
+query T
+SELECT try_parse_url('notaurl', 'PROTOCOL');
+----
+NULL
+
+query T
+SELECT try_parse_url('notaurl', 'QUERY');
+----
+NULL
+
 query T
 SELECT try_parse_url('https://example.com', 'PATH');
 ----
@@ -123,5 +144,48 @@ NULL
 
 query T
 SELECT try_parse_url('inva lid://spark.apache.org/path?query=1', 'QUERY');
+----
+NULL
+
+# NULL argument handling (Sail PR #1393)
+# NULL URL should return NULL
+query T
+SELECT try_parse_url(NULL, 'HOST');
+----
+NULL
+
+# NULL part should return NULL
+query T
+SELECT try_parse_url('https://example.com/path?query=1', NULL);
+----
+NULL
+
+# Both NULL should return NULL
+query T
+SELECT try_parse_url(NULL, NULL);
+----
+NULL
+
+# NULL URL with 3 args
+query T
+SELECT try_parse_url(NULL, 'QUERY', 'key');
+----
+NULL
+
+# NULL part with 3 args
+query T
+SELECT try_parse_url('https://example.com/path?query=1', NULL, 'key');
+----
+NULL
+
+# NULL key with 3 args (valid URL and part)
+query T
+SELECT try_parse_url('https://example.com/path?query=1', 'QUERY', NULL);
+----
+query=1
+
+# All three NULL
+query T
+SELECT try_parse_url(NULL, NULL, NULL);
 ----
 NULL
