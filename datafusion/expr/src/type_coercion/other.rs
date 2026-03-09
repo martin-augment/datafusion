@@ -67,7 +67,7 @@ pub fn get_coerce_type_for_case_expression(
     else_type: Option<&DataType>,
 ) -> Option<DataType> {
     let (initial_type, remaining) = match else_type {
-        None => (&then_types[0], &then_types[1..]),
+        None => then_types.split_first()?,
         Some(data_type) => (data_type, then_types),
     };
     fold_coerce(initial_type, remaining, type_union_coercion)
