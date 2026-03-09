@@ -87,15 +87,8 @@ impl SparkCast {
         let string_arg =
             Coercion::new_exact(TypeSignatureClass::Native(logical_string()));
         Self {
-            signature: Signature::one_of(
-                vec![
-                    TypeSignature::Coercible(vec![int_arg.clone(), string_arg.clone()]),
-                    TypeSignature::Coercible(vec![
-                        int_arg,
-                        string_arg.clone(),
-                        string_arg,
-                    ]),
-                ],
+            signature: Signature::new(
+                TypeSignature::Coercible(vec![int_arg.clone(), string_arg.clone()]),
                 Volatility::Stable,
             ),
             timezone: config
