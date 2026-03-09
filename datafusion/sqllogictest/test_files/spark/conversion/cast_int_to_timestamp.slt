@@ -19,50 +19,50 @@
 query P
 SELECT spark_cast(arrow_cast(0, 'Int8'), 'timestamp');
 ----
-1970-01-01T00:00:00
+1970-01-01T00:00:00Z
 
 query P
 SELECT spark_cast(arrow_cast(1, 'Int8'), 'timestamp');
 ----
-1970-01-01T00:00:01
+1970-01-01T00:00:01Z
 
 query P
 SELECT spark_cast(arrow_cast(-1, 'Int8'), 'timestamp');
 ----
-1969-12-31T23:59:59
+1969-12-31T23:59:59Z
 
 # Test spark_cast from int16 to timestamp
 query P
 SELECT spark_cast(arrow_cast(0, 'Int16'), 'timestamp');
 ----
-1970-01-01T00:00:00
+1970-01-01T00:00:00Z
 
 query P
 SELECT spark_cast(arrow_cast(3600, 'Int16'), 'timestamp');
 ----
-1970-01-01T01:00:00
+1970-01-01T01:00:00Z
 
 # Test spark_cast from int32 to timestamp
 query P
 SELECT spark_cast(arrow_cast(0, 'Int32'), 'timestamp');
 ----
-1970-01-01T00:00:00
+1970-01-01T00:00:00Z
 
 query P
 SELECT spark_cast(arrow_cast(1704067200, 'Int32'), 'timestamp');
 ----
-2024-01-01T00:00:00
+2024-01-01T00:00:00Z
 
 # Test spark_cast from int64 to timestamp
 query P
 SELECT spark_cast(0::bigint, 'timestamp');
 ----
-1970-01-01T00:00:00
+1970-01-01T00:00:00Z
 
 query P
 SELECT spark_cast(1704067200::bigint, 'timestamp');
 ----
-2024-01-01T00:00:00
+2024-01-01T00:00:00Z
 
 # Test NULL handling
 query P
@@ -95,29 +95,29 @@ NULL
 query P
 SELECT spark_cast(arrow_cast(127, 'Int8'), 'timestamp');
 ----
-1970-01-01T00:02:07
+1970-01-01T00:02:07Z
 
 query P
 SELECT spark_cast(arrow_cast(-128, 'Int8'), 'timestamp');
 ----
-1969-12-31T23:57:52
+1969-12-31T23:57:52Z
 
 # Test Int16 boundary values
 query P
 SELECT spark_cast(arrow_cast(32767, 'Int16'), 'timestamp');
 ----
-1970-01-01T09:06:07
+1970-01-01T09:06:07Z
 
 query P
 SELECT spark_cast(arrow_cast(-32768, 'Int16'), 'timestamp');
 ----
-1969-12-31T14:53:52
+1969-12-31T14:53:52Z
 
 # Test Int64 negative value
 query P
 SELECT spark_cast(-86400::bigint, 'timestamp');
 ----
-1969-12-31T00:00:00
+1969-12-31T00:00:00Z
 
 # Test unsupported source type - should error
 statement error
@@ -126,3 +126,69 @@ SELECT spark_cast('2024-01-01', 'timestamp');
 # Test unsupported target type - should error
 statement error
 SELECT spark_cast(100, 'string');
+
+# Test with different session timezones to verify simplify() picks up config
+
+# America/Los_Angeles (PST/PDT - has DST)
+statement ok
+SET datafusion.execution.time_zone = 'America/Los_Angeles';
+
+# Epoch in PST (UTC-8)
+query P
+SELECT spark_cast(0::bigint, 'timestamp');
+----
+1969-12-31T16:00:00-08:00
+
+# 2024-01-01 00:00:00 UTC in PST (winter, UTC-8)
+query P
+SELECT spark_cast(1704067200::bigint, 'timestamp');
+----
+2023-12-31T16:00:00-08:00
+
+# America/Phoenix (MST - no DST, always UTC-7)
+statement ok
+SET datafusion.execution.time_zone = 'America/Phoenix';
+
+# Epoch in Phoenix (UTC-7)
+query P
+SELECT spark_cast(0::bigint, 'timestamp');
+----
+1969-12-31T17:00:00-07:00
+
+# 2024-01-01 00:00:00 UTC in Phoenix (still UTC-7, no DST)
+query P
+SELECT spark_cast(1704067200::bigint, 'timestamp');
+----
+2023-12-31T17:00:00-07:00
+
+# Test with different timezones - LA (has DST)
+statement ok
+SET datafusion.execution.time_zone = 'America/Los_Angeles';
+
+query P
+SELECT spark_cast(1710054000::bigint, 'timestamp');
+----
+2024-03-09T23:00:00-08:00
+
+query P
+SELECT spark_cast(1710057600::bigint, 'timestamp');
+----
+2024-03-10T00:00:00-08:00
+
+# Phoenix has no DST - always UTC-7
+statement ok
+SET datafusion.execution.time_zone = 'America/Phoenix';
+
+query P
+SELECT spark_cast(1710054000::bigint, 'timestamp');
+----
+2024-03-10T00:00:00-07:00
+
+query P
+SELECT spark_cast(1710057600::bigint, 'timestamp');
+----
+2024-03-10T01:00:00-07:00
+
+# Reset to default UTC
+statement ok
+SET datafusion.execution.time_zone = 'UTC';

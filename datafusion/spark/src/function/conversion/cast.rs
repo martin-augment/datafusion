@@ -20,20 +20,23 @@ use arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, FieldRef, Int8Type, Int16Type, Int32Type,
     Int64Type, TimeUnit,
 };
-use datafusion_common::utils::take_function_args;
+use datafusion::logical_expr::{Coercion, TypeSignatureClass};
+use datafusion_common::config::ConfigOptions;
+use datafusion_common::types::logical_string;
 use datafusion_common::{
     Result as DataFusionResult, ScalarValue, exec_err, internal_err,
 };
-use datafusion_expr::{ColumnarValue, Expr, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility};
+use datafusion_expr::TypeSignatureClass::Integer;
+use datafusion_expr::{
+    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl,
+    Signature, TypeSignature, Volatility,
+};
 use std::any::Any;
 use std::sync::Arc;
-use datafusion::logical_expr::{Coercion, TypeSignatureClass};
-use datafusion_common::types::{logical_int64, logical_string};
-use datafusion_expr::simplify::{ExprSimplifyResult, SimplifyContext};
 
 const MICROS_PER_SECOND: i64 = 1_000_000;
 
-/// Convert seconds to microseconds with saturating overflow behavior
+/// Convert seconds to microseconds with saturating overflow behavior (matches spark spec)
 #[inline]
 fn secs_to_micros(secs: i64) -> i64 {
     secs.saturating_mul(MICROS_PER_SECOND)
@@ -63,6 +66,7 @@ fn secs_to_micros(secs: i64) -> i64 {
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct SparkCast {
     signature: Signature,
+    timezone: Option<Arc<str>>,
 }
 
 impl Default for SparkCast {
@@ -73,24 +77,45 @@ impl Default for SparkCast {
 
 impl SparkCast {
     pub fn new() -> Self {
+        Self::new_with_config(&ConfigOptions::default())
+    }
+
+    pub fn new_with_config(config: &ConfigOptions) -> Self {
         // First arg: value to cast (only ints for now with potential to add further support later)
         // Second arg: target datatype as Utf8 string literal (ex : 'timestamp')
-        let int_arg = Coercion::new_exact(TypeSignatureClass::Native(logical_int64()));
-        let string_arg = Coercion::new_exact(TypeSignatureClass::Native(logical_string()));
+        let int_arg = Coercion::new_exact(Integer);
+        let string_arg =
+            Coercion::new_exact(TypeSignatureClass::Native(logical_string()));
         Self {
             signature: Signature::one_of(
-                vec![TypeSignature::Coercible(vec![int_arg, string_arg])],
+                vec![
+                    TypeSignature::Coercible(vec![int_arg.clone(), string_arg.clone()]),
+                    TypeSignature::Coercible(vec![
+                        int_arg,
+                        string_arg.clone(),
+                        string_arg,
+                    ]),
+                ],
                 Volatility::Stable,
             ),
+            timezone: config
+                .execution
+                .time_zone
+                .as_ref()
+                .map(|tz| Arc::from(tz.as_str()))
+                .or_else(|| Some(Arc::from("UTC"))),
         }
     }
 }
 
 /// Parse target type string into a DataType
-fn parse_target_type(type_str: &str) -> DataFusionResult<DataType> {
+fn parse_target_type(
+    type_str: &str,
+    timezone: Option<Arc<str>>,
+) -> DataFusionResult<DataType> {
     match type_str.to_lowercase().as_str() {
         // further data type support in future
-        "timestamp" => Ok(DataType::Timestamp(TimeUnit::Microsecond, None)),
+        "timestamp" => Ok(DataType::Timestamp(TimeUnit::Microsecond, timezone)),
         other => exec_err!(
             "Unsupported spark_cast target type '{}'. Supported types: timestamp",
             other
@@ -101,13 +126,14 @@ fn parse_target_type(type_str: &str) -> DataFusionResult<DataType> {
 /// Extract target type string from scalar arguments
 fn get_target_type_from_scalar_args(
     scalar_args: &[Option<&ScalarValue>],
+    timezone: Option<Arc<str>>,
 ) -> DataFusionResult<DataType> {
-    let [_, type_arg] = take_function_args("spark_cast", scalar_args)?;
+    let type_arg = scalar_args.get(1).and_then(|opt| *opt);
 
     match type_arg {
-        Some(ScalarValue::Utf8(Some(s))) | Some(ScalarValue::LargeUtf8(Some(s))) => {
-            parse_target_type(s)
-        }
+        Some(ScalarValue::Utf8(Some(s)))
+        | Some(ScalarValue::LargeUtf8(Some(s)))
+        | Some(ScalarValue::Utf8View(Some(s))) => parse_target_type(s, timezone),
         _ => exec_err!(
             "spark_cast requires second argument to be a string of target data type ex: timestamp"
         ),
@@ -154,23 +180,30 @@ impl ScalarUDFImpl for SparkCast {
         internal_err!("return_field_from_args should be used instead")
     }
 
+    fn with_updated_config(&self, config: &ConfigOptions) -> Option<ScalarUDF> {
+        Some(ScalarUDF::from(Self::new_with_config(config)))
+    }
+
+    fn return_field_from_args(
+        &self,
+        args: ReturnFieldArgs,
+    ) -> DataFusionResult<FieldRef> {
+        let nullable = args.arg_fields.iter().any(|f| f.is_nullable());
+        let return_type = get_target_type_from_scalar_args(
+            args.scalar_arguments,
+            self.timezone.clone(),
+        )?;
+        Ok(Arc::new(Field::new(self.name(), return_type, nullable)))
+    }
+
     fn invoke_with_args(
         &self,
         args: ScalarFunctionArgs,
     ) -> DataFusionResult<ColumnarValue> {
         let target_type = args.return_field.data_type();
-        // Use session timezone, fallback to UTC if not set
-        let session_tz: Arc<str> = args
-            .config_options
-            .execution
-            .time_zone
-            .clone()
-            .map(|s| Arc::from(s.as_str()))
-            .unwrap_or_else(|| Arc::from("UTC"));
-
         match target_type {
-            DataType::Timestamp(TimeUnit::Microsecond, _) => {
-                cast_to_timestamp(&args.args[0], Some(session_tz))
+            DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+                cast_to_timestamp(&args.args[0], tz.clone())
             }
             other => exec_err!("Unsupported spark_cast target type: {:?}", other),
         }
@@ -232,7 +265,7 @@ mod tests {
 
     // helpers to make testing easier
     fn make_args(input: ColumnarValue, target_type: &str) -> ScalarFunctionArgs {
-        make_args_with_timezone(input, target_type, None)
+        make_args_with_timezone(input, target_type, Some("UTC"))
     }
 
     fn make_args_with_timezone(
@@ -242,10 +275,13 @@ mod tests {
     ) -> ScalarFunctionArgs {
         let return_field = Arc::new(Field::new(
             "result",
-            DataType::Timestamp(TimeUnit::Microsecond, None),
+            DataType::Timestamp(
+                TimeUnit::Microsecond,
+                Some(Arc::from(timezone.unwrap())),
+            ),
             true,
         ));
-        let mut config = datafusion_common::config::ConfigOptions::default();
+        let mut config = ConfigOptions::default();
         if let Some(tz) = timezone {
             config.execution.time_zone = Some(tz.to_string());
         }
