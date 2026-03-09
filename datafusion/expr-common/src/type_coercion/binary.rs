@@ -844,12 +844,16 @@ pub fn try_type_union_resolution_with_struct(
 
 /// Coerce `lhs_type` and `rhs_type` to a common type for type unification
 /// contexts — where two values must be brought to a common type but are not
-/// being compared. Examples: UNION, CASE THEN/ELSE branches, NVL2.
+/// being compared. Examples: UNION, CASE THEN/ELSE branches, NVL2. For other
+/// contexts, [`comparison_coercion`] should typically be used instead.
 ///
-/// Prefers strings over numeric types (e.g., `SELECT 1 UNION SELECT '2'`
-/// coerces both sides to `Utf8`).
-///
-/// For comparisons (`=`, `<`, `>`), use [`comparison_coercion`] instead.
+/// The intuition is that we try to find the "widest" type that can represent
+/// all values from both sides. When one side is a string and the other is
+/// numeric, this prefers strings because every number has a textual
+/// representation but not every string can be parsed as a number (e.g., `SELECT
+/// 1 UNION SELECT 'a'` coerces both sides to a string). This is in contrast to
+/// [`comparison_coercion`], which prefers numeric types so that ordering and
+/// equality follow numeric semantics.
 pub fn type_union_coercion(lhs_type: &DataType, rhs_type: &DataType) -> Option<DataType> {
     if lhs_type.equals_datatype(rhs_type) {
         return Some(lhs_type.clone());
