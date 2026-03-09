@@ -24,12 +24,12 @@ use datafusion_common::utils::take_function_args;
 use datafusion_common::{
     Result as DataFusionResult, ScalarValue, exec_err, internal_err,
 };
-use datafusion_expr::{
-    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
-    TypeSignature, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Expr, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility};
 use std::any::Any;
 use std::sync::Arc;
+use datafusion::logical_expr::{Coercion, TypeSignatureClass};
+use datafusion_common::types::{logical_int64, logical_string};
+use datafusion_expr::simplify::{ExprSimplifyResult, SimplifyContext};
 
 const MICROS_PER_SECOND: i64 = 1_000_000;
 
@@ -73,12 +73,14 @@ impl Default for SparkCast {
 
 impl SparkCast {
     pub fn new() -> Self {
+        // First arg: value to cast (only ints for now with potential to add further support later)
+        // Second arg: target datatype as Utf8 string literal (ex : 'timestamp')
+        let int_arg = Coercion::new_exact(TypeSignatureClass::Native(logical_int64()));
+        let string_arg = Coercion::new_exact(TypeSignatureClass::Native(logical_string()));
         Self {
-            // First arg: value to cast (only ints for now with potential to add further support later)
-            // Second arg: target datatype as Utf8 string literal (ex : 'timestamp')
             signature: Signature::one_of(
-                vec![TypeSignature::Any(2)],
-                Volatility::Immutable,
+                vec![TypeSignature::Coercible(vec![int_arg, string_arg])],
+                Volatility::Stable,
             ),
         }
     }
@@ -152,15 +154,6 @@ impl ScalarUDFImpl for SparkCast {
         internal_err!("return_field_from_args should be used instead")
     }
 
-    fn return_field_from_args(
-        &self,
-        args: ReturnFieldArgs,
-    ) -> DataFusionResult<FieldRef> {
-        let nullable = args.arg_fields.iter().any(|f| f.is_nullable());
-        let target_type = get_target_type_from_scalar_args(args.scalar_arguments)?;
-        Ok(Arc::new(Field::new(self.name(), target_type, nullable)))
-    }
-
     fn invoke_with_args(
         &self,
         args: ScalarFunctionArgs,
@@ -176,7 +169,7 @@ impl ScalarUDFImpl for SparkCast {
             .unwrap_or_else(|| Arc::from("UTC"));
 
         match target_type {
-            DataType::Timestamp(TimeUnit::Microsecond, None) => {
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
                 cast_to_timestamp(&args.args[0], Some(session_tz))
             }
             other => exec_err!("Unsupported spark_cast target type: {:?}", other),
