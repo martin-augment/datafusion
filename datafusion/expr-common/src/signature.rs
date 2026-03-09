@@ -158,7 +158,7 @@ pub enum Arity {
 pub enum TypeSignature {
     /// One or more arguments of a common type out of a list of valid types.
     ///
-    /// For functions that take no arguments (e.g. `random()`), see [`TypeSignature::Nullary`]).
+    /// For functions that take no arguments (e.g. `random()`), see [`TypeSignature::Nullary`].
     ///
     /// # Examples
     ///
@@ -209,7 +209,7 @@ pub enum TypeSignature {
     /// (numeric is preferred over string).
     ///
     /// Note:
-    /// - For functions that take no arguments (e.g. `random()`), see [`TypeSignature::Nullary`]).
+    /// - For functions that take no arguments (e.g. `random()`), see [`TypeSignature::Nullary`].
     /// - If all arguments have type [`DataType::Null`], they are coerced to `Utf8`
     ///
     /// [`comparison_coercion`]: crate::type_coercion::binary::comparison_coercion
@@ -247,7 +247,7 @@ pub enum TypeSignature {
     /// For example, if a function is called with (utf8, large_utf8), all
     /// arguments will be coerced to  `LargeUtf8`
     ///
-    /// For functions that take no arguments (e.g. `random()`), use [`TypeSignature::Nullary`]).
+    /// For functions that take no arguments (e.g. `random()`), use [`TypeSignature::Nullary`].
     String(usize),
     /// No arguments
     Nullary,
