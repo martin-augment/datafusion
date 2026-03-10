@@ -27,6 +27,7 @@ use super::{
     ColumnStatistics, DisplayAs, ExecutionPlanProperties, PlanProperties,
     RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
+use crate::check_if_same_properties;
 use crate::coalesce::{LimitedBatchCoalescer, PushBatchStatus};
 use crate::common::can_project;
 use crate::execution_plan::CardinalityEffect;
@@ -50,6 +51,7 @@ use arrow::record_batch::RecordBatch;
 use datafusion_common::cast::as_boolean_array;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::stats::Precision;
+use datafusion_common::tree_node::TreeNodeRecursion;
 use datafusion_common::{
     DataFusionError, Result, ScalarValue, internal_err, plan_err, project_schema,
 };
@@ -84,7 +86,7 @@ pub struct FilterExec {
     /// Selectivity for statistics. 0 = no rows, 100 = all rows
     default_selectivity: u8,
     /// Properties equivalence properties, partitioning, etc.
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
     /// The projection indices of the columns in the output schema of join
     projection: Option<ProjectionRef>,
     /// Target batch size for output batches
@@ -206,7 +208,7 @@ impl FilterExecBuilder {
             input: self.input,
             metrics: ExecutionPlanMetricsSet::new(),
             default_selectivity: self.default_selectivity,
-            cache,
+            cache: Arc::new(cache),
             projection: self.projection,
             batch_size: self.batch_size,
             fetch: self.fetch,
@@ -279,7 +281,7 @@ impl FilterExec {
             input: Arc::clone(&self.input),
             metrics: self.metrics.clone(),
             default_selectivity: self.default_selectivity,
-            cache: self.cache.clone(),
+            cache: Arc::clone(&self.cache),
             projection: self.projection.clone(),
             batch_size,
             fetch: self.fetch,
@@ -387,7 +389,7 @@ impl FilterExec {
         let schema = input.schema();
         let stats = Self::statistics_helper(
             &schema,
-            input.partition_statistics(None)?,
+            Arc::unwrap_or_clone(input.partition_statistics(None)?),
             predicate,
             default_selectivity,
         )?;
@@ -431,6 +433,17 @@ impl FilterExec {
             input.pipeline_behavior(),
             input.boundedness(),
         ))
+    }
+
+    fn with_new_children_and_same_properties(
+        &self,
+        mut children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Self {
+        Self {
+            input: children.swap_remove(0),
+            metrics: ExecutionPlanMetricsSet::new(),
+            ..Self::clone(self)
+        }
     }
 }
 
@@ -486,12 +499,19 @@ impl ExecutionPlan for FilterExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![&self.input]
+    }
+
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&dyn PhysicalExpr) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        f(self.predicate.as_ref())
     }
 
     fn maintains_input_order(&self) -> Vec<bool> {
@@ -503,6 +523,7 @@ impl ExecutionPlan for FilterExec {
         self: Arc<Self>,
         mut children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
+        check_if_same_properties!(self, children);
         let new_input = children.swap_remove(0);
         FilterExecBuilder::from(&*self)
             .with_input(new_input)
@@ -542,15 +563,16 @@ impl ExecutionPlan for FilterExec {
 
     /// The output statistics of a filtering operation can be estimated if the
     /// predicate's selectivity value can be determined for the incoming data.
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
-        let input_stats = self.input.partition_statistics(partition)?;
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
+        let input_stats =
+            Arc::unwrap_or_clone(self.input.partition_statistics(partition)?);
         let stats = Self::statistics_helper(
             &self.input.schema(),
             input_stats,
             self.predicate(),
             self.default_selectivity,
         )?;
-        Ok(stats.project(self.projection.as_ref()))
+        Ok(Arc::new(stats.project(self.projection.as_ref())))
     }
 
     fn cardinality_effect(&self) -> CardinalityEffect {
@@ -585,7 +607,7 @@ impl ExecutionPlan for FilterExec {
         parent_filters: Vec<Arc<dyn PhysicalExpr>>,
         _config: &ConfigOptions,
     ) -> Result<FilterDescription> {
-        if !matches!(phase, FilterPushdownPhase::Pre) {
+        if phase != FilterPushdownPhase::Pre {
             let child =
                 ChildFilterDescription::from_child(&parent_filters, self.input())?;
             return Ok(FilterDescription::new().with_child(child));
@@ -608,7 +630,7 @@ impl ExecutionPlan for FilterExec {
         child_pushdown_result: ChildPushdownResult,
         _config: &ConfigOptions,
     ) -> Result<FilterPushdownPropagation<Arc<dyn ExecutionPlan>>> {
-        if !matches!(phase, FilterPushdownPhase::Pre) {
+        if phase != FilterPushdownPhase::Pre {
             return Ok(FilterPushdownPropagation::if_all(child_pushdown_result));
         }
         // We absorb any parent filters that were not handled by our children
@@ -685,12 +707,12 @@ impl ExecutionPlan for FilterExec {
                 input: Arc::clone(&filter_input),
                 metrics: self.metrics.clone(),
                 default_selectivity: self.default_selectivity,
-                cache: Self::compute_properties(
+                cache: Arc::new(Self::compute_properties(
                     &filter_input,
                     &new_predicate,
                     self.default_selectivity,
                     self.projection.as_deref(),
-                )?,
+                )?),
                 projection: self.projection.clone(),
                 batch_size: self.batch_size,
                 fetch: self.fetch,
@@ -704,13 +726,17 @@ impl ExecutionPlan for FilterExec {
         })
     }
 
+    fn fetch(&self) -> Option<usize> {
+        self.fetch
+    }
+
     fn with_fetch(&self, fetch: Option<usize>) -> Option<Arc<dyn ExecutionPlan>> {
         Some(Arc::new(Self {
             predicate: Arc::clone(&self.predicate),
             input: Arc::clone(&self.input),
             metrics: self.metrics.clone(),
             default_selectivity: self.default_selectivity,
-            cache: self.cache.clone(),
+            cache: Arc::clone(&self.cache),
             projection: self.projection.clone(),
             batch_size: self.batch_size,
             fetch,
@@ -736,6 +762,21 @@ impl EmbeddedProjection for FilterExec {
         FilterExecBuilder::from(self)
             .apply_projection(projection)?
             .build()
+    }
+}
+
+/// Converts an interval bound to a [`Precision`] value. NULL bounds (which
+/// represent "unbounded" in the interval type) map to [`Precision::Absent`].
+fn interval_bound_to_precision(
+    bound: ScalarValue,
+    is_exact: bool,
+) -> Precision<ScalarValue> {
+    if bound.is_null() {
+        Precision::Absent
+    } else if is_exact {
+        Precision::Exact(bound)
+    } else {
+        Precision::Inexact(bound)
     }
 }
 
@@ -771,11 +812,9 @@ fn collect_new_statistics(
                     };
                 };
                 let (lower, upper) = interval.into_bounds();
-                let (min_value, max_value) = if lower.eq(&upper) {
-                    (Precision::Exact(lower), Precision::Exact(upper))
-                } else {
-                    (Precision::Inexact(lower), Precision::Inexact(upper))
-                };
+                let is_exact = !lower.is_null() && !upper.is_null() && lower == upper;
+                let min_value = interval_bound_to_precision(lower, is_exact);
+                let max_value = interval_bound_to_precision(upper, is_exact);
                 ColumnStatistics {
                     null_count: input_column_stats[idx].null_count.to_inexact(),
                     max_value,
@@ -1323,7 +1362,7 @@ mod tests {
         ];
         let _ = exp_col_stats
             .into_iter()
-            .zip(statistics.column_statistics)
+            .zip(statistics.column_statistics.clone())
             .map(|(expected, actual)| {
                 if let Some(val) = actual.min_value.get_value() {
                     if val.data_type().is_floating() {
@@ -1394,7 +1433,7 @@ mod tests {
             )),
         ));
         // Since filter predicate passes all entries, statistics after filter shouldn't change.
-        let expected = input.partition_statistics(None)?.column_statistics;
+        let expected = input.partition_statistics(None)?.column_statistics.clone();
         let filter: Arc<dyn ExecutionPlan> =
             Arc::new(FilterExec::try_new(predicate, input)?);
         let statistics = filter.partition_statistics(None)?;
@@ -1577,7 +1616,7 @@ mod tests {
             }],
         };
 
-        assert_eq!(filter_statistics, expected_filter_statistics);
+        assert_eq!(*filter_statistics, expected_filter_statistics);
 
         Ok(())
     }
@@ -2050,6 +2089,42 @@ mod tests {
             "Post-phase parent filter column index must be remapped \
              from output schema (c@0) to input schema (c@2)"
         );
+
+        Ok(())
+    }
+
+    /// Columns with Absent min/max statistics should remain Absent after
+    /// FilterExec.
+    #[tokio::test]
+    async fn test_filter_statistics_absent_columns_stay_absent() -> Result<()> {
+        let schema = Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Int32, false),
+        ]);
+        let input = Arc::new(StatisticsExec::new(
+            Statistics {
+                num_rows: Precision::Inexact(1000),
+                total_byte_size: Precision::Absent,
+                column_statistics: vec![
+                    ColumnStatistics::default(),
+                    ColumnStatistics::default(),
+                ],
+            },
+            schema.clone(),
+        ));
+
+        let predicate = Arc::new(BinaryExpr::new(
+            Arc::new(Column::new("a", 0)),
+            Operator::Eq,
+            Arc::new(Literal::new(ScalarValue::Int32(Some(42)))),
+        ));
+        let filter: Arc<dyn ExecutionPlan> =
+            Arc::new(FilterExec::try_new(predicate, input)?);
+
+        let statistics = filter.partition_statistics(None)?;
+        let col_b_stats = &statistics.column_statistics[1];
+        assert_eq!(col_b_stats.min_value, Precision::Absent);
+        assert_eq!(col_b_stats.max_value, Precision::Absent);
 
         Ok(())
     }
