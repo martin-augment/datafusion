@@ -389,7 +389,7 @@ impl FilterExec {
         let schema = input.schema();
         let stats = Self::statistics_helper(
             &schema,
-            input.partition_statistics(None)?,
+            Arc::unwrap_or_clone(input.partition_statistics(None)?),
             predicate,
             default_selectivity,
         )?;
@@ -563,15 +563,16 @@ impl ExecutionPlan for FilterExec {
 
     /// The output statistics of a filtering operation can be estimated if the
     /// predicate's selectivity value can be determined for the incoming data.
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
-        let input_stats = self.input.partition_statistics(partition)?;
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
+        let input_stats =
+            Arc::unwrap_or_clone(self.input.partition_statistics(partition)?);
         let stats = Self::statistics_helper(
             &self.input.schema(),
             input_stats,
             self.predicate(),
             self.default_selectivity,
         )?;
-        Ok(stats.project(self.projection.as_ref()))
+        Ok(Arc::new(stats.project(self.projection.as_ref())))
     }
 
     fn cardinality_effect(&self) -> CardinalityEffect {
@@ -764,6 +765,21 @@ impl EmbeddedProjection for FilterExec {
     }
 }
 
+/// Converts an interval bound to a [`Precision`] value. NULL bounds (which
+/// represent "unbounded" in the interval type) map to [`Precision::Absent`].
+fn interval_bound_to_precision(
+    bound: ScalarValue,
+    is_exact: bool,
+) -> Precision<ScalarValue> {
+    if bound.is_null() {
+        Precision::Absent
+    } else if is_exact {
+        Precision::Exact(bound)
+    } else {
+        Precision::Inexact(bound)
+    }
+}
+
 /// This function ensures that all bounds in the `ExprBoundaries` vector are
 /// converted to closed bounds. If a lower/upper bound is initially open, it
 /// is adjusted by using the next/previous value for its data type to convert
@@ -796,11 +812,9 @@ fn collect_new_statistics(
                     };
                 };
                 let (lower, upper) = interval.into_bounds();
-                let (min_value, max_value) = if lower.eq(&upper) {
-                    (Precision::Exact(lower), Precision::Exact(upper))
-                } else {
-                    (Precision::Inexact(lower), Precision::Inexact(upper))
-                };
+                let is_exact = !lower.is_null() && !upper.is_null() && lower == upper;
+                let min_value = interval_bound_to_precision(lower, is_exact);
+                let max_value = interval_bound_to_precision(upper, is_exact);
                 ColumnStatistics {
                     null_count: input_column_stats[idx].null_count.to_inexact(),
                     max_value,
@@ -1348,7 +1362,7 @@ mod tests {
         ];
         let _ = exp_col_stats
             .into_iter()
-            .zip(statistics.column_statistics)
+            .zip(statistics.column_statistics.clone())
             .map(|(expected, actual)| {
                 if let Some(val) = actual.min_value.get_value() {
                     if val.data_type().is_floating() {
@@ -1419,7 +1433,7 @@ mod tests {
             )),
         ));
         // Since filter predicate passes all entries, statistics after filter shouldn't change.
-        let expected = input.partition_statistics(None)?.column_statistics;
+        let expected = input.partition_statistics(None)?.column_statistics.clone();
         let filter: Arc<dyn ExecutionPlan> =
             Arc::new(FilterExec::try_new(predicate, input)?);
         let statistics = filter.partition_statistics(None)?;
@@ -1602,7 +1616,7 @@ mod tests {
             }],
         };
 
-        assert_eq!(filter_statistics, expected_filter_statistics);
+        assert_eq!(*filter_statistics, expected_filter_statistics);
 
         Ok(())
     }
@@ -2075,6 +2089,42 @@ mod tests {
             "Post-phase parent filter column index must be remapped \
              from output schema (c@0) to input schema (c@2)"
         );
+
+        Ok(())
+    }
+
+    /// Columns with Absent min/max statistics should remain Absent after
+    /// FilterExec.
+    #[tokio::test]
+    async fn test_filter_statistics_absent_columns_stay_absent() -> Result<()> {
+        let schema = Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Int32, false),
+        ]);
+        let input = Arc::new(StatisticsExec::new(
+            Statistics {
+                num_rows: Precision::Inexact(1000),
+                total_byte_size: Precision::Absent,
+                column_statistics: vec![
+                    ColumnStatistics::default(),
+                    ColumnStatistics::default(),
+                ],
+            },
+            schema.clone(),
+        ));
+
+        let predicate = Arc::new(BinaryExpr::new(
+            Arc::new(Column::new("a", 0)),
+            Operator::Eq,
+            Arc::new(Literal::new(ScalarValue::Int32(Some(42)))),
+        ));
+        let filter: Arc<dyn ExecutionPlan> =
+            Arc::new(FilterExec::try_new(predicate, input)?);
+
+        let statistics = filter.partition_statistics(None)?;
+        let col_b_stats = &statistics.column_statistics[1];
+        assert_eq!(col_b_stats.min_value, Precision::Absent);
+        assert_eq!(col_b_stats.max_value, Precision::Absent);
 
         Ok(())
     }
