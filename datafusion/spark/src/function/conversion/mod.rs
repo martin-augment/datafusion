@@ -15,11 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod cast;
+
+use cast::Cast;
 use datafusion_expr::ScalarUDF;
 use std::sync::Arc;
 
 pub mod expr_fn {}
 
 pub fn functions() -> Vec<Arc<ScalarUDF>> {
-    vec![]
+    vec![Arc::new(ScalarUDF::from(Cast::new()))]
 }

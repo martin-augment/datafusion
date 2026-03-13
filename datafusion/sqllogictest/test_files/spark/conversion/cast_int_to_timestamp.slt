@@ -1,0 +1,86 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+
+#   http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Test spark_cast from int8 to timestamp
+query P
+SELECT spark_cast(arrow_cast(0, 'Int8'));
+----
+1970-01-01T00:00:00
+
+query P
+SELECT spark_cast(arrow_cast(1, 'Int8'));
+----
+1970-01-01T00:00:01
+
+query P
+SELECT spark_cast(arrow_cast(-1, 'Int8'));
+----
+1969-12-31T23:59:59
+
+# Test spark_cast from int16 to timestamp
+query P
+SELECT spark_cast(arrow_cast(0, 'Int16'));
+----
+1970-01-01T00:00:00
+
+query P
+SELECT spark_cast(arrow_cast(3600, 'Int16'));
+----
+1970-01-01T01:00:00
+
+# Test spark_cast from int32 to timestamp
+query P
+SELECT spark_cast(arrow_cast(0, 'Int32'));
+----
+1970-01-01T00:00:00
+
+query P
+SELECT spark_cast(arrow_cast(1704067200, 'Int32'));
+----
+2024-01-01T00:00:00
+
+# Test spark_cast from int64 to timestamp
+query P
+SELECT spark_cast(0::bigint);
+----
+1970-01-01T00:00:00
+
+query P
+SELECT spark_cast(1704067200::bigint);
+----
+2024-01-01T00:00:00
+
+# Test NULL handling
+query P
+SELECT spark_cast(arrow_cast(NULL, 'Int8'));
+----
+NULL
+
+query P
+SELECT spark_cast(arrow_cast(NULL, 'Int16'));
+----
+NULL
+
+query P
+SELECT spark_cast(arrow_cast(NULL, 'Int32'));
+----
+NULL
+
+query P
+SELECT spark_cast(NULL::bigint);
+----
+NULL
