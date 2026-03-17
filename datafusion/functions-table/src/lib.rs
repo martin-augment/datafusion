@@ -42,21 +42,23 @@ pub fn all_default_table_functions() -> Vec<Arc<TableFunction>> {
 /// This is used to ensure creating the list of `TableFunction` only happens once.
 #[macro_export]
 macro_rules! create_udtf_function {
-    ($module:path, $name:expr) => {
-        paste::paste! {
-            pub fn [<$name:lower>]() -> Arc<TableFunction> {
-                static INSTANCE: std::sync::LazyLock<Arc<TableFunction>> =
-                    std::sync::LazyLock::new(|| {
-                        std::sync::Arc::new(TableFunction::new(
-                            $name.to_string(),
-                            Arc::new($module {}),
-                        ))
-                    });
-                std::sync::Arc::clone(&INSTANCE)
-            }
+    ($module:expr, $func_name:ident, $name:expr) => {
+        pub fn $func_name() -> Arc<TableFunction> {
+            static INSTANCE: std::sync::LazyLock<Arc<TableFunction>> =
+                std::sync::LazyLock::new(|| {
+                    std::sync::Arc::new(TableFunction::new(
+                        $name.to_string(),
+                        Arc::new($module),
+                    ))
+                });
+            std::sync::Arc::clone(&INSTANCE)
         }
     };
 }
 
-create_udtf_function!(generate_series::GenerateSeriesFunc, "generate_series");
-create_udtf_function!(generate_series::RangeFunc, "range");
+create_udtf_function!(
+    generate_series::GenerateSeriesFunc {},
+    generate_series,
+    "generate_series"
+);
+create_udtf_function!(generate_series::RangeFunc {}, range, "range");
