@@ -111,7 +111,7 @@ impl ScalarUDFImpl for ArraysZip {
 
     fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
         if arg_types.is_empty() {
-            return exec_err!("arrays_zip requires at least two arguments");
+            return exec_err!("arrays_zip requires at least one argument");
         }
 
         let mut fields = Vec::with_capacity(arg_types.len());
@@ -157,8 +157,8 @@ impl ScalarUDFImpl for ArraysZip {
 /// lengths, shorter arrays are padded with NULLs.
 /// Supports List, LargeList, and Null input types.
 fn arrays_zip_inner(args: &[ArrayRef]) -> Result<ArrayRef> {
-    if args.len() < 2 {
-        return exec_err!("arrays_zip requires at least two arguments");
+    if args.is_empty() {
+        return exec_err!("arrays_zip requires at least one argument");
     }
 
     let num_rows = args[0].len();
