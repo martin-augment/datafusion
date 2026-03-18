@@ -34,7 +34,6 @@ use arrow::util::pretty::pretty_format_batches;
 use arrow_schema::{SortOptions, TimeUnit};
 use datafusion::{assert_batches_eq, dataframe};
 use datafusion_common::metadata::FieldMetadata;
-use datafusion_functions_aggregate::approx_distinct::approx_distinct;
 use datafusion_functions_aggregate::count::{count_all, count_all_window};
 use datafusion_functions_aggregate::expr_fn::{
     array_agg, avg, avg_distinct, count, count_distinct, max, median, min, sum,
@@ -6861,8 +6860,8 @@ async fn test_dataframe_api_aggregate_fn_in_select() -> Result<()> {
     let df = test_table().await?;
 
     let res = df.select(vec![
-        approx_distinct(col("c9")).alias("count_c9"),
-        approx_distinct(cast(col("c9"), DataType::Utf8View)).alias("count_c9_str"),
+        count(col("c9")).alias("count_c9"),
+        count(cast(col("c9"), DataType::Utf8View)).alias("count_c9_str"),
     ])?;
 
     assert_batches_eq!(
