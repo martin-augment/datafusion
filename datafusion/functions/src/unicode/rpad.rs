@@ -118,7 +118,7 @@ impl ScalarUDFImpl for RPadFunc {
             args, number_rows, ..
         } = args;
 
-        const MAX_SCALAR_TARGET_LEN: usize = 8192;
+        const MAX_SCALAR_TARGET_LEN: usize = 16384;
 
         // If target_len and fill (if specified) are constants, use the
         // scalar fast path.
