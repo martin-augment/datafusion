@@ -671,17 +671,16 @@ impl Statistics {
             .collect();
 
         // Accumulate all statistics in a single pass.
-        // Uses precision_add for sum (avoids the expensive
-        // ScalarValue::add round-trip through Arrow arrays), and
-        // Precision::min/max which use cheap PartialOrd comparison.
+        // Uses precision_add for sum (reuses the lhs accumulator for
+        // direct numeric addition), and Precision::min/max which use
+        // cheap PartialOrd comparison.
         for stat in items.iter().skip(1) {
             for (col_idx, col_stats) in column_statistics.iter_mut().enumerate() {
                 let item_cs = &stat.column_statistics[col_idx];
 
                 col_stats.null_count = col_stats.null_count.add(&item_cs.null_count);
                 col_stats.byte_size = col_stats.byte_size.add(&item_cs.byte_size);
-                col_stats.sum_value =
-                    precision_add(&col_stats.sum_value, &item_cs.sum_value);
+                precision_add(&mut col_stats.sum_value, &item_cs.sum_value);
                 col_stats.min_value = col_stats.min_value.min(&item_cs.min_value);
                 col_stats.max_value = col_stats.max_value.max(&item_cs.max_value);
             }
