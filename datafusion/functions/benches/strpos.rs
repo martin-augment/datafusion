@@ -110,6 +110,10 @@ fn make_scalar_needle_args(
     is_string_view: bool,
 ) -> Vec<ColumnarValue> {
     let needle_len = needle.len();
+    assert!(
+        str_len_chars >= needle_len,
+        "str_len_chars must be >= needle length"
+    );
 
     let mut haystacks: Vec<Option<String>> = Vec::with_capacity(N_ROWS);
     for _ in 0..N_ROWS {
@@ -119,10 +123,8 @@ fn make_scalar_needle_args(
                 .sample_iter(&Alphanumeric)
                 .take(str_len_chars)
                 .collect();
-            if str_len_chars >= needle_len {
-                let pos = rng.random_range(0..=str_len_chars - needle_len);
-                value[pos..pos + needle_len].copy_from_slice(needle.as_bytes());
-            }
+            let pos = rng.random_range(0..=str_len_chars - needle_len);
+            value[pos..pos + needle_len].copy_from_slice(needle.as_bytes());
             haystacks.push(Some(String::from_utf8(value).unwrap()));
         } else {
             let mut s = random_string(rng, str_len_chars, false);
