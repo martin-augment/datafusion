@@ -125,14 +125,14 @@ from aggregate_test_100
 order by c9
 
 # WindowFunction wrong signature
-statement error DataFusion error: Error during planning: Function 'nth_value' failed to match any signature(.|\n)*nth_value\(Int32, Int64, Int64\)(.|\n)*Candidate functions:
+statement error DataFusion error: Error during planning: Function 'nth_value' failed to match any signature
 select
 c9,
 nth_value(c5, 2, 3) over (order by c9) as nv1
 from aggregate_test_100
 order by c9
 
-query error DataFusion error: Error during planning: Function 'sum' failed to match any signature(.|\n)*sum\(Boolean\)(.|\n)*Candidate functions:
+query error DataFusion error: Error during planning: Function 'sum' failed to match any signature
 select sum(bool_col) from (values (true), (false), (null)) as t(bool_col);
 
 

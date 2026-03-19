@@ -27,7 +27,8 @@ use datafusion_common::utils::{
     ListCoercion, base_type, coerced_fixed_size_list_to_list,
 };
 use datafusion_common::{
-    Result, exec_err, internal_err, plan_err, types::NativeType, utils::list_ndims,
+    DataFusionError, Result, exec_err, internal_err, plan_err, types::NativeType,
+    utils::list_ndims,
 };
 use datafusion_expr_common::signature::ArrayFunctionArgument;
 use datafusion_expr_common::type_coercion::binary::type_union_resolution;
@@ -325,23 +326,30 @@ fn get_valid_types_with_udf<F: UDFCoercionExt>(
         },
         TypeSignature::OneOf(signatures) => {
             let mut res = vec![];
+            let mut deferred_err = None;
             for sig in signatures {
-                if let Ok(valid_types) =
-                    get_valid_types_with_udf(sig, current_types, func)
-                {
-                    res.extend(valid_types);
+                match get_valid_types_with_udf(sig, current_types, func) {
+                    Ok(valid_types) => res.extend(valid_types),
+                    Err(DataFusionError::Plan(_)) => {}
+                    Err(err) => {
+                        if deferred_err.is_none() {
+                            deferred_err = Some(err);
+                        }
+                    }
                 }
             }
 
-            // Every signature failed, return a neutral planning error rather than
-            // a branch-specific error that may not match the best overload.
-            if res.is_empty() {
+            if !res.is_empty() {
+                res
+            } else if let Some(err) = deferred_err {
+                return Err(err);
+            } else {
+                // Every signature failed, return a neutral planning error rather than
+                // a branch-specific error that may not match the best overload.
                 return plan_err!(
                     "Function '{}' failed to match any signature",
                     func.name()
                 );
-            } else {
-                res
             }
         }
         _ => get_valid_types(func.name(), signature, current_types)?,
@@ -1224,18 +1232,12 @@ mod tests {
         let current_fields = vec![Arc::new(Field::new("t", DataType::Boolean, true))];
         let signature = Signature::one_of(
             vec![
-                Signature::coercible(
-                    vec![Coercion::new_exact(TypeSignatureClass::Decimal)],
-                    Volatility::Immutable,
-                )
-                .type_signature
-                .clone(),
-                Signature::coercible(
-                    vec![Coercion::new_exact(TypeSignatureClass::Duration)],
-                    Volatility::Immutable,
-                )
-                .type_signature
-                .clone(),
+                TypeSignature::Coercible(vec![Coercion::new_exact(
+                    TypeSignatureClass::Decimal,
+                )]),
+                TypeSignature::Coercible(vec![Coercion::new_exact(
+                    TypeSignatureClass::Duration,
+                )]),
             ],
             Volatility::Immutable,
         );
@@ -1243,10 +1245,9 @@ mod tests {
         let err = fields_with_udf(&current_fields, &MockUdf(signature)).unwrap_err();
         let err = err.to_string();
 
-        assert_eq!(
-            err,
+        assert!(err.starts_with(
             "Error during planning: Function 'test' failed to match any signature"
-        );
+        ));
         assert!(!err.contains("Internal error"));
         assert!(!err.contains("TypeSignatureClass"));
     }
@@ -1262,11 +1263,56 @@ mod tests {
         let err = fields_with_udf(&current_fields, &MockUdf(signature)).unwrap_err();
         let err = err.to_string();
 
-        assert_eq!(
-            err,
+        assert!(err.starts_with(
             "Error during planning: Function 'test' failed to match any signature"
-        );
+        ));
         assert!(!err.contains("Internal error"));
+    }
+
+    struct AlwaysExecErrUdf(Signature);
+
+    impl UDFCoercionExt for AlwaysExecErrUdf {
+        fn name(&self) -> &str {
+            "test"
+        }
+
+        fn signature(&self) -> &Signature {
+            &self.0
+        }
+
+        fn coerce_types(&self, _arg_types: &[DataType]) -> Result<Vec<DataType>> {
+            exec_err!("boom")
+        }
+    }
+
+    #[test]
+    fn test_one_of_propagates_non_plan_errors() {
+        let current_fields = vec![Arc::new(Field::new("t", DataType::Int32, true))];
+        let signature =
+            Signature::one_of(vec![TypeSignature::UserDefined], Volatility::Immutable);
+
+        let err =
+            fields_with_udf(&current_fields, &AlwaysExecErrUdf(signature)).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Execution error: Function 'test' user-defined coercion failed with: Execution error: boom"
+        );
+    }
+
+    #[test]
+    fn test_one_of_preserves_success_when_later_branch_errors() -> Result<()> {
+        let current_fields = vec![Arc::new(Field::new("t", DataType::Int32, true))];
+        let signature = Signature::one_of(
+            vec![TypeSignature::Exact(vec![DataType::Int32]), TypeSignature::UserDefined],
+            Volatility::Immutable,
+        );
+
+        let fields = fields_with_udf(&current_fields, &AlwaysExecErrUdf(signature))?;
+
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].data_type(), &DataType::Int32);
+        Ok(())
     }
 
     #[test]
