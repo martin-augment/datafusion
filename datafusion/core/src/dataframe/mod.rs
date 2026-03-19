@@ -51,6 +51,7 @@ use arrow::compute::{cast, concat};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow_schema::FieldRef;
 use datafusion_common::config::{CsvOptions, JsonOptions};
+use datafusion_common::tree_node::{Transformed, TreeNode};
 use datafusion_common::{
     Column, DFSchema, DataFusionError, ParamValues, ScalarValue, SchemaError,
     TableReference, UnnestOptions, exec_err, internal_datafusion_err, not_impl_err,
@@ -413,7 +414,7 @@ impl DataFrame {
         let expr_list: Vec<SelectExpr> =
             expr_list.into_iter().map(|e| e.into()).collect();
 
-        // Extract plain expressions
+        // Extract expressions
         let expressions = expr_list.iter().filter_map(|e| match e {
             SelectExpr::Expression(expr) => Some(expr),
             _ => None,
@@ -431,7 +432,7 @@ impl DataFrame {
         // Collect aggregate expressions
         let aggr_exprs = find_aggregate_exprs(expressions.clone());
 
-        // Check if any expression is non-aggregate
+        // Check for non-aggregate expressions
         let has_non_aggregate_expr = expressions
             .clone()
             .any(|expr| find_aggregate_exprs(std::iter::once(expr)).is_empty());
@@ -439,7 +440,7 @@ impl DataFrame {
         // Fallback to projection:
         // - already aggregated
         // - contains non-aggregate expressions
-        // - no aggregates at all
+        // - no aggregates
         if matches!(plan, LogicalPlan::Aggregate(_))
             || has_non_aggregate_expr
             || aggr_exprs.is_empty()
@@ -454,30 +455,49 @@ impl DataFrame {
             });
         }
 
-        // Build Aggregate node
-        let aggr_exprs: Vec<Expr> = aggr_exprs
+        // Assign aliases to aggregate expressions
+        let mut aggr_map: HashMap<Expr, Expr> = HashMap::new();
+        let aggr_exprs_with_alias: Vec<Expr> = aggr_exprs
             .into_iter()
             .enumerate()
-            .map(|(i, expr)| expr.alias(format!("__agg_{i}")))
+            .map(|(i, expr)| {
+                let alias = format!("__df_agg_{i}");
+                let aliased = expr.clone().alias(alias.clone());
+                let col = Expr::Column(Column::from_name(alias));
+                aggr_map.insert(expr, col);
+                aliased
+            })
             .collect();
 
+        // Build aggregate plan
         plan = LogicalPlanBuilder::from(plan)
-            .aggregate(Vec::<Expr>::new(), aggr_exprs)?
+            .aggregate(Vec::<Expr>::new(), aggr_exprs_with_alias)?
             .build()?;
 
-        // Replace aggregates with their aliases
+        // Rewrite expressions to use aggregate outputs
+        let rewrite_expr = |expr: Expr, aggr_map: &HashMap<Expr, Expr>| -> Result<Expr> {
+            expr.transform(|e| {
+                Ok(match aggr_map.get(&e) {
+                    Some(replacement) => Transformed::yes(replacement.clone()),
+                    None => Transformed::no(e),
+                })
+            })
+            .map(|t| t.data)
+        };
+
         let mut rewritten_exprs = Vec::with_capacity(expr_list.len());
-        for (i, select_expr) in expr_list.into_iter().enumerate() {
+        for select_expr in expr_list.into_iter() {
             match select_expr {
                 SelectExpr::Expression(expr) => {
-                    let column = Expr::Column(Column::from_name(format!("__agg_{i}")));
+                    let rewritten = rewrite_expr(expr.clone(), &aggr_map)?;
                     let alias = expr.name_for_alias()?;
-                    rewritten_exprs.push(SelectExpr::Expression(column.alias(alias)));
+                    rewritten_exprs.push(SelectExpr::Expression(rewritten.alias(alias)));
                 }
                 other => rewritten_exprs.push(other),
             }
         }
 
+        // Final projection
         let project_plan = LogicalPlanBuilder::from(plan)
             .project(rewritten_exprs)?
             .build()?;

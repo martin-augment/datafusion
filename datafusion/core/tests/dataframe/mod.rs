@@ -34,6 +34,7 @@ use arrow::util::pretty::pretty_format_batches;
 use arrow_schema::{SortOptions, TimeUnit};
 use datafusion::{assert_batches_eq, dataframe};
 use datafusion_common::metadata::FieldMetadata;
+use datafusion_expr::select_expr::SelectExpr;
 use datafusion_functions_aggregate::count::{count_all, count_all_window};
 use datafusion_functions_aggregate::expr_fn::{
     array_agg, avg, avg_distinct, count, count_distinct, max, median, min, sum,
@@ -72,7 +73,9 @@ use datafusion_common_runtime::SpawnedTask;
 use datafusion_datasource::file_format::format_as_file_type;
 use datafusion_execution::config::SessionConfig;
 use datafusion_execution::runtime_env::RuntimeEnv;
-use datafusion_expr::expr::{GroupingSet, NullTreatment, Sort, WindowFunction};
+use datafusion_expr::expr::{
+    GroupingSet, NullTreatment, Sort, WildcardOptions, WindowFunction,
+};
 use datafusion_expr::var_provider::{VarProvider, VarType};
 use datafusion_expr::{
     Expr, ExprFunctionExt, ExprSchemable, LogicalPlan, LogicalPlanBuilder,
@@ -6859,21 +6862,69 @@ async fn test_duplicate_state_fields_for_dfschema_construct() -> Result<()> {
 async fn test_dataframe_api_aggregate_fn_in_select() -> Result<()> {
     let df = test_table().await?;
 
-    let res = df.select(vec![
+    // Multiple aggregates
+    let res = df.clone().select(vec![
         count(col("c9")).alias("count_c9"),
         count(cast(col("c9"), DataType::Utf8View)).alias("count_c9_str"),
+        sum(col("c9")).alias("sum_c9"),
+        count(col("c8")).alias("count_c8"),
+        (sum(col("c9")) + count(col("c8"))).alias("total1"),
+        ((count(col("c9")) + lit(1)) * lit(2)).alias("total2"),
+        (count(col("c9")) + lit(1)).alias("count_c9_add_1"),
     ])?;
 
     assert_batches_eq!(
         &[
-            "+----------+--------------+",
-            "| count_c9 | count_c9_str |",
-            "+----------+--------------+",
-            "| 100      | 100          |",
-            "+----------+--------------+",
+            "+----------+--------------+--------------+----------+--------------+--------+----------------+",
+            "| count_c9 | count_c9_str | sum_c9       | count_c8 | total1       | total2 | count_c9_add_1 |",
+            "+----------+--------------+--------------+----------+--------------+--------+----------------+",
+            "| 100      | 100          | 222089770060 | 100      | 222089770160 | 202    | 101            |",
+            "+----------+--------------+--------------+----------+--------------+--------+----------------+",
         ],
         &res.collect().await?
     );
+
+    // Test duplicate aggregate aliases
+    let res = df.clone().select(vec![
+        count(col("c9")).alias("count_c9"),
+        count(col("c9")).alias("count_c9_2"),
+    ])?;
+
+    assert_batches_eq!(
+        &[
+            "+----------+------------+",
+            "| count_c9 | count_c9_2 |",
+            "+----------+------------+",
+            "| 100      | 100        |",
+            "+----------+------------+",
+        ],
+        &res.collect().await?
+    );
+
+    // Wildcard
+    let res = df
+        .clone()
+        .select(vec![
+            SelectExpr::Wildcard(WildcardOptions::default()),
+            lit(42).into(),
+        ])?
+        .limit(0, None)?;
+
+    let batches = res.collect().await?;
+    assert_eq!(batches[0].num_rows(), 100);
+    assert_eq!(batches[0].num_columns(), 14);
+
+    let res = df.clone().select(vec![
+        SelectExpr::QualifiedWildcard(
+            "aggregate_test_100".into(),
+            WildcardOptions::default(),
+        ),
+        lit(42).into(),
+    ])?;
+
+    let batches = res.collect().await?;
+    assert_eq!(batches[0].num_rows(), 100);
+    assert_eq!(batches[0].num_columns(), 14);
 
     Ok(())
 }
