@@ -27,8 +27,8 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::stream::{BoxStream, Stream};
-use futures::{StreamExt, TryFutureExt, TryStreamExt};
-use object_store::{GetOptions, GetRange, GetResultPayload, ObjectStore};
+use futures::{StreamExt, TryFutureExt};
+use object_store::{GetOptions, GetRange, ObjectStore};
 
 /// How far past `raw_end` the initial bounded fetch covers. If the terminating
 /// newline is not found within this window, `ScanningLastTerminator` issues
@@ -83,9 +83,7 @@ pub struct AlignedBoundaryStream {
     file_size: u64,
 }
 
-/// Fetch a bounded byte range from `store` and return it as a stream,
-/// handling both `File` and `Stream` payloads.  For `File` payloads the
-/// underlying file is seeked to `range.start` before streaming.
+/// Fetch a bounded byte range from `store` and return it as a stream
 async fn get_stream(
     store: Arc<dyn ObjectStore>,
     location: object_store::path::Path,
@@ -96,29 +94,7 @@ async fn get_stream(
         ..Default::default()
     };
     let result = store.get_opts(&location, opts).await?;
-    let stream = match result.payload {
-        #[cfg(not(target_arch = "wasm32"))]
-        GetResultPayload::File(file, _) => {
-            use std::io::SeekFrom;
-            use tokio::io::AsyncSeekExt;
-            let mut tokio_file = tokio::fs::File::from_std(file);
-            tokio_file
-                .seek(SeekFrom::Start(range.start))
-                .await
-                .map_err(|e| object_store::Error::Generic {
-                    store: "local",
-                    source: Box::new(e),
-                })?;
-            tokio_util::io::ReaderStream::new(tokio::io::BufReader::new(tokio_file))
-                .map_err(|e| object_store::Error::Generic {
-                    store: "local",
-                    source: Box::new(e),
-                })
-                .boxed()
-        }
-        GetResultPayload::Stream(s) => s.boxed(),
-    };
-    Ok(stream)
+    Ok(result.into_stream())
 }
 
 impl AlignedBoundaryStream {
@@ -382,6 +358,7 @@ impl Stream for AlignedBoundaryStream {
 mod tests {
     use super::*;
     use crate::test_utils::{CHUNK_SIZES, make_chunked_store};
+    use futures::TryStreamExt;
 
     async fn collect_stream(stream: AlignedBoundaryStream) -> Vec<u8> {
         let chunks: Vec<Bytes> = stream.try_collect().await.unwrap();
