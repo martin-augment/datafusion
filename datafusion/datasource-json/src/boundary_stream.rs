@@ -129,7 +129,12 @@ impl AlignedBoundaryStream {
             });
         }
 
-        let fetch_start = if raw_start > 0 { raw_start - 1 } else { 0 };
+        let (fetch_start, phase) = if raw_start == 0 {
+            (0, Phase::FetchingChunks)
+        } else {
+            (raw_start - 1, Phase::ScanningFirstTerminator)
+        };
+
         let initial_fetch_end = raw_end.saturating_add(END_SCAN_LOOKAHEAD).min(file_size);
 
         let inner = get_stream(
@@ -138,12 +143,6 @@ impl AlignedBoundaryStream {
             fetch_start..initial_fetch_end,
         )
         .await?;
-
-        let (fetch_start, phase) = if raw_start == 0 {
-            (0, Phase::FetchingChunks)
-        } else {
-            (raw_start - 1, Phase::ScanningFirstTerminator)
-        };
 
         // Last partition reads to EOF — no end-boundary scanning needed.
         let end = if raw_end >= file_size {
@@ -361,8 +360,7 @@ mod tests {
     use futures::TryStreamExt;
 
     async fn collect_stream(stream: AlignedBoundaryStream) -> Vec<u8> {
-        let chunks: Vec<Bytes> = stream.try_collect().await.unwrap();
-        chunks.into_iter().flat_map(|b| b.to_vec()).collect()
+        stream.try_collect::<Vec<Bytes>>().await.unwrap().concat()
     }
 
     #[tokio::test]
