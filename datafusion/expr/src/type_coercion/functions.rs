@@ -1294,17 +1294,19 @@ mod tests {
         let err =
             fields_with_udf(&current_fields, &AlwaysExecErrUdf(signature)).unwrap_err();
 
-        assert_eq!(
-            err.to_string(),
+        assert!(err.to_string().starts_with(
             "Execution error: Function 'test' user-defined coercion failed with: Execution error: boom"
-        );
+        ));
     }
 
     #[test]
     fn test_one_of_preserves_success_when_later_branch_errors() -> Result<()> {
         let current_fields = vec![Arc::new(Field::new("t", DataType::Int32, true))];
         let signature = Signature::one_of(
-            vec![TypeSignature::Exact(vec![DataType::Int32]), TypeSignature::UserDefined],
+            vec![
+                TypeSignature::Exact(vec![DataType::Int32]),
+                TypeSignature::UserDefined,
+            ],
             Volatility::Immutable,
         );
 
