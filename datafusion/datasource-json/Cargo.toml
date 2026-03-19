@@ -46,7 +46,6 @@ futures = { workspace = true }
 object_store = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true, features = ["sync"] }
-tokio-util = { workspace = true, features = ["io"] }
 
 # Note: add additional linter rules in lib.rs.
 # Rust does not support workspace + new linter rules in subcrates yet
