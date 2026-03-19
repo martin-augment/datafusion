@@ -5336,7 +5336,6 @@ impl ScalarType<i32> for Date32Type {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use super::*;
     use crate::cast::{as_list_array, as_map_array, as_struct_array};
@@ -5354,7 +5353,6 @@ mod tests {
     };
     use arrow::error::ArrowError;
     use arrow::util::pretty::pretty_format_columns;
-    use chrono::NaiveDate;
     use insta::assert_snapshot;
     use rand::Rng;
 
