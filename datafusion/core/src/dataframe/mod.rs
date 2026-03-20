@@ -457,17 +457,24 @@ impl DataFrame {
 
         // Assign aliases to aggregate expressions
         let mut aggr_map: HashMap<Expr, Expr> = HashMap::new();
+        let mut used_names = HashSet::new();
         let aggr_exprs_with_alias: Vec<Expr> = aggr_exprs
             .into_iter()
-            .enumerate()
-            .map(|(i, expr)| {
-                let alias = format!("__df_agg_{i}");
-                let aliased = expr.clone().alias(alias.clone());
-                let col = Expr::Column(Column::from_name(alias));
+            .map(|expr| {
+                let base_name = expr.name_for_alias()?;
+                let mut name = base_name.clone();
+                let mut counter = 1;
+                while used_names.contains(&name) {
+                    name = format!("{base_name}_{counter}");
+                    counter += 1;
+                }
+                used_names.insert(name.clone());
+                let aliased = expr.clone().alias(name.clone());
+                let col = Expr::Column(Column::from_name(name));
                 aggr_map.insert(expr, col);
-                aliased
+                Ok(aliased)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         // Build aggregate plan
         plan = LogicalPlanBuilder::from(plan)
