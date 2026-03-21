@@ -1926,7 +1926,6 @@ mod tests {
 
     use super::*;
 
-    use arrow::array::Int32Array;
     use arrow::datatypes::{DataType, Fields};
     use arrow::error::{ArrowError, Result as ArrowResult};
     use datafusion_common::stats::Precision::{Absent, Exact, Inexact};
@@ -2918,12 +2917,12 @@ mod tests {
 
         let build_batch = RecordBatch::try_new(
             Arc::new(Schema::new(vec![Field::new("a", DataType::Int32, true)])),
-            vec![Arc::new(arrow::array::Int32Array::from(vec![1, 2, 3]))],
+            vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
         )?;
 
         let probe_batch = RecordBatch::try_new(
             Arc::new(Schema::new(vec![Field::new("b", DataType::Int32, true)])),
-            vec![Arc::new(arrow::array::Int32Array::from(vec![4, 5, 6, 7]))],
+            vec![Arc::new(Int32Array::from(vec![4, 5, 6, 7]))],
         )?;
 
         let result = build_batch_empty_build_side(
