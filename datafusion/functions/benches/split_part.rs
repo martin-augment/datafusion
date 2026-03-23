@@ -73,6 +73,7 @@ fn gen_split_part_data(
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 fn bench_split_part(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     func: &ScalarUDF,
