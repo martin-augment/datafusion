@@ -15,26 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod cast;
+//! Specialized Sort Merge Join stream for Semi/Anti joins.
+//!
+//! Used internally by `SortMergeJoinExec` for semi/anti join types.
 
-use datafusion_expr::ScalarUDF;
-use datafusion_functions::make_udf_function_with_config;
-use std::sync::Arc;
+pub(crate) mod stream;
 
-make_udf_function_with_config!(cast::SparkCast, spark_cast);
-
-pub mod expr_fn {
-    use datafusion_functions::export_functions;
-
-    export_functions!((
-        spark_cast,
-        "Casts given value to the specified type following Spark-compatible semantics",
-        @config arg1 arg2
-    ));
-}
-
-pub fn functions() -> Vec<Arc<ScalarUDF>> {
-    use datafusion_common::config::ConfigOptions;
-    let config = ConfigOptions::default();
-    vec![spark_cast(&config)]
-}
+#[cfg(test)]
+mod tests;
