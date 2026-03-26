@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+# Tests for casting integer types to timestamp using spark_cast
+
 # Test spark_cast from int8 to timestamp
 query P
 SELECT spark_cast(arrow_cast(0, 'Int8'), 'timestamp');
@@ -189,7 +191,7 @@ SELECT spark_cast(1710057600::bigint, 'timestamp');
 ----
 2024-03-10T01:00:00-07:00
 
-# Reset to default UTC
+# Reset to default
 statement ok
 SET datafusion.execution.time_zone = 'UTC';
 
@@ -246,7 +248,7 @@ NULL NULL NULL NULL
 
 # Reset and cleanup
 statement ok
-SET datafusion.execution.time_zone = 'UTC';
+RESET datafusion.execution.time_zone;
 
 statement ok
 DROP TABLE int_test;
