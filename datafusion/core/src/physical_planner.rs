@@ -3560,21 +3560,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_list_types() -> Result<()> {
-        // expression: "a in ('a', 1)"
+    async fn in_list_types_mixed_string_int_error() -> Result<()> {
+        // expression: "c1 in ('a', 1)" where c1 is Utf8
         let list = vec![lit("a"), lit(1i64)];
         let logical_plan = test_csv_scan()
             .await?
-            // filter clause needs the type coercion rule applied
             .filter(col("c12").lt(lit(0.05)))?
             .project(vec![col("c1").in_list(list, false)])?
             .build()?;
-        let execution_plan = plan(&logical_plan).await?;
-        // verify that the plan correctly adds cast from Int64(1) to Utf8, and the const will be evaluated.
+        let e = plan(&logical_plan).await.unwrap_err().to_string();
 
-        let expected = r#"expr: BinaryExpr { left: BinaryExpr { left: Column { name: "c1", index: 0 }, op: Eq, right: Literal { value: Utf8("a"), field: Field { name: "lit", data_type: Utf8 } }, fail_on_overflow: false }"#;
-
-        assert_contains!(format!("{execution_plan:?}"), expected);
+        assert_contains!(&e, "Cannot cast string 'a' to value of Int64 type");
 
         Ok(())
     }
