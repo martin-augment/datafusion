@@ -6854,3 +6854,26 @@ async fn test_duplicate_state_fields_for_dfschema_construct() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_dataframe_api_aggregate_fn_in_select() -> Result<()> {
+    let df = test_table().await?;
+
+    let res = df.select(vec![
+        count(col("c9")).alias("count_c9"),
+        count(cast(col("c9"), DataType::Utf8View)).alias("count_c9_str"),
+    ])?;
+
+    assert_batches_eq!(
+        &[
+            "+----------+--------------+",
+            "| count_c9 | count_c9_str |",
+            "+----------+--------------+",
+            "| 100      | 100          |",
+            "+----------+--------------+",
+        ],
+        &res.collect().await?
+    );
+
+    Ok(())
+}
