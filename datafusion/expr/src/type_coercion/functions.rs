@@ -325,24 +325,20 @@ fn get_valid_types_with_udf<F: UDFCoercionExt>(
         },
         TypeSignature::OneOf(signatures) => {
             let mut res = vec![];
-            let mut errors = vec![];
             for sig in signatures {
-                match get_valid_types_with_udf(sig, current_types, func) {
-                    Ok(valid_types) => {
-                        res.extend(valid_types);
-                    }
-                    Err(e) => {
-                        errors.push(e.to_string());
-                    }
+                if let Ok(valid_types) =
+                    get_valid_types_with_udf(sig, current_types, func)
+                {
+                    res.extend(valid_types);
                 }
             }
 
-            // Every signature failed, return the joined error
+            // Every signature failed, return a neutral planning error rather than
+            // a branch-specific error that may not match the best overload.
             if res.is_empty() {
-                return internal_err!(
-                    "Function '{}' failed to match any signature, errors: {}",
-                    func.name(),
-                    errors.join(",")
+                return plan_err!(
+                    "Function '{}' failed to match any signature",
+                    func.name()
                 );
             } else {
                 res
@@ -1221,6 +1217,56 @@ mod tests {
         assert_eq!(coerced_fields, current_fields);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_one_of_uses_generic_plan_error_instead_of_internal_error() {
+        let current_fields = vec![Arc::new(Field::new("t", DataType::Boolean, true))];
+        let signature = Signature::one_of(
+            vec![
+                Signature::coercible(
+                    vec![Coercion::new_exact(TypeSignatureClass::Decimal)],
+                    Volatility::Immutable,
+                )
+                .type_signature
+                .clone(),
+                Signature::coercible(
+                    vec![Coercion::new_exact(TypeSignatureClass::Duration)],
+                    Volatility::Immutable,
+                )
+                .type_signature
+                .clone(),
+            ],
+            Volatility::Immutable,
+        );
+
+        let err = fields_with_udf(&current_fields, &MockUdf(signature)).unwrap_err();
+        let err = err.to_string();
+
+        assert_eq!(
+            err,
+            "Error during planning: Function 'test' failed to match any signature"
+        );
+        assert!(!err.contains("Internal error"));
+        assert!(!err.contains("TypeSignatureClass"));
+    }
+
+    #[test]
+    fn test_one_of_uses_generic_plan_error_for_arity_mismatch() {
+        let current_fields = vec![Arc::new(Field::new("t", DataType::Int32, true))];
+        let signature = Signature::one_of(
+            vec![TypeSignature::Any(2), TypeSignature::Any(3)],
+            Volatility::Immutable,
+        );
+
+        let err = fields_with_udf(&current_fields, &MockUdf(signature)).unwrap_err();
+        let err = err.to_string();
+
+        assert_eq!(
+            err,
+            "Error during planning: Function 'test' failed to match any signature"
+        );
+        assert!(!err.contains("Internal error"));
     }
 
     #[test]
