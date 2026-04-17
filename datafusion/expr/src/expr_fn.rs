@@ -18,8 +18,9 @@
 //! Functions for creating logical expressions
 
 use crate::expr::{
-    AggregateFunction, BinaryExpr, Cast, Exists, GroupingSet, InList, InSubquery,
-    NullTreatment, Placeholder, TryCast, Unnest, WildcardOptions, WindowFunction,
+    AggregateFunction, BinaryExpr, Cast, Exists, GroupingSet, InList, InSubquery, Lambda,
+    LambdaVariable, NullTreatment, Placeholder, TryCast, Unnest, WildcardOptions,
+    WindowFunction,
 };
 use crate::function::{
     AccumulatorArgs, AccumulatorFactoryFunction, PartitionEvaluatorFactory,
@@ -717,6 +718,19 @@ pub fn interval_datetime_lit(value: &str) -> Expr {
 pub fn interval_month_day_nano_lit(value: &str) -> Expr {
     let interval = parse_interval_month_day_nano(value).ok();
     Expr::Literal(ScalarValue::IntervalMonthDayNano(interval), None)
+}
+
+/// Create a lambda expression
+pub fn lambda(params: impl IntoIterator<Item = impl Into<String>>, body: Expr) -> Expr {
+    Expr::Lambda(Lambda::new(
+        params.into_iter().map(Into::into).collect(),
+        body,
+    ))
+}
+
+/// Create an lambda variable expression
+pub fn lambda_var(name: impl Into<String>, field: FieldRef) -> Expr {
+    Expr::LambdaVariable(LambdaVariable::new(name.into(), field))
 }
 
 /// Extensions for configuring [`Expr::AggregateFunction`] or [`Expr::WindowFunction`]

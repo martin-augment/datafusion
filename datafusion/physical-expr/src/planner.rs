@@ -15,9 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ScalarFunctionExpr;
+use crate::{HigherOrderFunctionExpr, ScalarFunctionExpr};
 use crate::{
     PhysicalExpr,
     expressions::{self, Column, Literal, binary, like, similar_to},
@@ -27,10 +28,14 @@ use arrow::datatypes::Schema;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::metadata::{FieldMetadata, format_type_and_metadata};
 use datafusion_common::{
-    DFSchema, Result, ScalarValue, ToDFSchema, exec_err, not_impl_err, plan_err,
+    DFSchema, Result, ScalarValue, ToDFSchema, exec_err, internal_datafusion_err,
+    not_impl_err, plan_err,
 };
 use datafusion_expr::execution_props::ExecutionProps;
-use datafusion_expr::expr::{Alias, Cast, InList, Placeholder, ScalarFunction};
+use datafusion_expr::expr::{
+    Alias, Cast, HigherOrderFunction, InList, Lambda, LambdaVariable, Placeholder,
+    ScalarFunction,
+};
 use datafusion_expr::var_provider::VarType;
 use datafusion_expr::var_provider::is_system_variables;
 use datafusion_expr::{
@@ -398,6 +403,100 @@ pub fn create_physical_expr(
         },
         Expr::Placeholder(Placeholder { id, .. }) => {
             exec_err!("Placeholder '{id}' was not provided a value for execution.")
+        }
+        Expr::HigherOrderFunction(invocation @ HigherOrderFunction { func, args }) => {
+            let num_lambdas = args
+                .iter()
+                .filter(|arg| matches!(arg, Expr::Lambda(_)))
+                .count();
+
+            let mut lambda_parameters =
+                invocation.lambda_parameters(input_dfschema)?.into_iter();
+
+            if num_lambdas > lambda_parameters.len() {
+                return plan_err!(
+                    "{} lambda_parameters returned only {} values for {num_lambdas} lambdas",
+                    func.name(),
+                    lambda_parameters.len()
+                );
+            }
+
+            let physical_args = args
+                .iter()
+                .map(|arg| match arg {
+                    Expr::Lambda(lambda) => {
+                        let lambda_parameters = lambda_parameters
+                            .next()
+                            .ok_or_else(|| {
+                                internal_datafusion_err!(
+                                    "lambda_parameters len should have been checked above"
+                                )
+                            })?
+                            .into_iter()
+                            .zip(&lambda.params)
+                            .map(|(field, name)| field.with_name(name))
+                            .collect();
+
+                        let lambda_schema = DFSchema::from_unqualified_fields(
+                            lambda_parameters,
+                            HashMap::new(),
+                        )?;
+
+                        create_physical_expr(arg, &lambda_schema, execution_props)
+                    }
+                    _ => create_physical_expr(arg, input_dfschema, execution_props),
+                })
+                .collect::<Result<_>>()?;
+
+            let config_options = match execution_props.config_options.as_ref() {
+                Some(config_options) => Arc::clone(config_options),
+                None => Arc::new(ConfigOptions::default()),
+            };
+
+            Ok(Arc::new(HigherOrderFunctionExpr::try_new(
+                Arc::clone(func),
+                physical_args,
+                input_schema,
+                config_options,
+            )?))
+        }
+        Expr::Lambda(Lambda { params, body }) => {
+            if body.any_column_refs() {
+                return plan_err!("lambda doesn't support column capture");
+            }
+
+            expressions::lambda(
+                params,
+                create_physical_expr(body, input_dfschema, execution_props)?,
+            )
+        }
+        Expr::LambdaVariable(LambdaVariable {
+            name,
+            field,
+            spans: _,
+        }) => {
+            let index = input_dfschema.inner().index_of(name)?;
+            let schema_field = input_dfschema.field(index);
+
+            // LambdaVariable.field will be made optional as in Expr::Placeholder
+            // and only LambdaVariable.name used, and field.name ignored,
+            // so they're not enforced to match for logical expressions
+            if field.data_type() != schema_field.data_type()
+                || field.is_nullable() != schema_field.is_nullable()
+                || field.metadata() != schema_field.metadata()
+                || field.dict_is_ordered() != schema_field.dict_is_ordered()
+            {
+                return plan_err!(
+                    "LambdaVariable field and schema field mismatch (names ignored) {} != {}",
+                    field,
+                    schema_field
+                );
+            }
+
+            Ok(Arc::new(expressions::LambdaVariable::new(
+                index,
+                Arc::clone(schema_field),
+            )))
         }
         other => {
             not_impl_err!("Physical plan does not support logical expression {other:?}")

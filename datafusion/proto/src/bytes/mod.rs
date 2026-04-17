@@ -25,11 +25,11 @@ use crate::physical_plan::{
     PhysicalProtoConverterExtension,
 };
 use crate::protobuf;
-use datafusion_common::{Result, plan_datafusion_err};
+use datafusion_common::{Result, not_impl_err, plan_datafusion_err};
 use datafusion_execution::TaskContext;
 use datafusion_expr::{
-    AggregateUDF, Expr, LogicalPlan, Volatility, WindowUDF, create_udaf, create_udf,
-    create_udwf,
+    AggregateUDF, Expr, HigherOrderSignature, HigherOrderUDF, LogicalPlan, Volatility,
+    WindowUDF, create_udaf, create_udf, create_udwf,
 };
 use prost::{
     Message,
@@ -123,6 +123,54 @@ impl Serializeable for Expr {
                 )))
             }
 
+            fn udhof(
+                &self,
+                name: &str,
+            ) -> Result<Arc<dyn datafusion_expr::HigherOrderUDF>> {
+                // if a SimpleHigherOrderFunction get's added, use it instead of MockHigherOrderUDF
+                #[derive(Debug, PartialEq, Eq, Hash)]
+                struct MockHigherOrderUDF {
+                    name: String,
+                    signature: HigherOrderSignature,
+                }
+
+                impl HigherOrderUDF for MockHigherOrderUDF {
+                    fn name(&self) -> &str {
+                        &self.name
+                    }
+
+                    fn signature(&self) -> &HigherOrderSignature {
+                        &self.signature
+                    }
+
+                    fn lambda_parameters(
+                        &self,
+                        _value_fields: &[arrow::datatypes::FieldRef],
+                    ) -> Result<Vec<Vec<arrow::datatypes::Field>>> {
+                        not_impl_err!("mock HigherOrderUDF")
+                    }
+
+                    fn return_field_from_args(
+                        &self,
+                        _args: datafusion_expr::HigherOrderReturnFieldArgs,
+                    ) -> Result<arrow::datatypes::FieldRef> {
+                        not_impl_err!("mock HigherOrderUDF")
+                    }
+
+                    fn invoke_with_args(
+                        &self,
+                        _args: datafusion_expr::HigherOrderFunctionArgs,
+                    ) -> Result<datafusion_expr::ColumnarValue> {
+                        not_impl_err!("mock HigherOrderUDF")
+                    }
+                }
+
+                Ok(Arc::new(MockHigherOrderUDF {
+                    name: name.to_string(),
+                    signature: HigherOrderSignature::variadic_any(Volatility::Immutable),
+                }))
+            }
+
             fn udaf(&self, name: &str) -> Result<Arc<AggregateUDF>> {
                 Ok(Arc::new(create_udaf(
                     name,
@@ -159,6 +207,14 @@ impl Serializeable for Expr {
                     "register_udf called in Placeholder Registry!"
                 )
             }
+            fn register_udhof(
+                &mut self,
+                _udhof: Arc<dyn datafusion_expr::HigherOrderUDF>,
+            ) -> Result<Option<Arc<dyn datafusion_expr::HigherOrderUDF>>> {
+                datafusion_common::internal_err!(
+                    "register_udhof called in Placeholder Registry!"
+                )
+            }
             fn register_udwf(
                 &mut self,
                 _udaf: Arc<WindowUDF>,
@@ -170,6 +226,10 @@ impl Serializeable for Expr {
 
             fn expr_planners(&self) -> Vec<Arc<dyn ExprPlanner>> {
                 vec![]
+            }
+
+            fn udhofs(&self) -> std::collections::HashSet<String> {
+                std::collections::HashSet::default()
             }
 
             fn udafs(&self) -> std::collections::HashSet<String> {

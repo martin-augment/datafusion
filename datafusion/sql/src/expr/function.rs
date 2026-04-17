@@ -15,19 +15,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::sync::Arc;
+
 use crate::planner::{ContextProvider, PlannerContext, SqlToRel};
 
 use arrow::datatypes::DataType;
 use datafusion_common::{
-    DFSchema, Dependency, Diagnostic, Result, Span, internal_datafusion_err,
+    DFSchema, Dependency, Diagnostic, HashSet, Result, Span, internal_datafusion_err,
     internal_err, not_impl_err, plan_datafusion_err, plan_err,
 };
 use datafusion_expr::{
-    Expr, ExprSchemable, SortExpr, WindowFrame, WindowFunctionDefinition,
+    Expr, ExprSchemable, SortExpr, ValueOrLambda, WindowFrame, WindowFunctionDefinition,
     arguments::ArgumentName,
-    expr,
-    expr::{NullTreatment, ScalarFunction, Unnest, WildcardOptions, WindowFunction},
+    expr::{
+        self, HigherOrderFunction, Lambda, NullTreatment, ScalarFunction, Unnest,
+        WildcardOptions, WindowFunction,
+    },
     planner::{PlannerResult, RawAggregateExpr, RawWindowExpr},
+    type_coercion::functions::value_fields_with_higher_order_udf,
 };
 use sqlparser::ast::{
     DuplicateTreatment, Expr as SQLExpr, Function as SQLFunction, FunctionArg,
@@ -57,6 +62,7 @@ pub fn suggest_valid_function(
         let mut funcs = Vec::new();
 
         funcs.extend(ctx.udf_names());
+        funcs.extend(ctx.udhof_names());
         funcs.extend(ctx.udaf_names());
 
         funcs
@@ -360,6 +366,146 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
                 let verbose_alias = format!("{name}({arg_names})");
 
                 return Ok(Expr::ScalarFunction(inner).alias(verbose_alias));
+            }
+        }
+
+        if let Some(fm) = self.context_provider.get_higher_order_meta(&name) {
+            // plan non-lambda arguments first so we can get theirs datatype and call
+            // HigherOrderUDF::lambda_parameters to then plan the lambda arguments with
+            // resolved lambda variables
+            enum ExprOrLambda {
+                Expr(Expr),
+                Lambda(sqlparser::ast::LambdaFunction),
+            }
+
+            let partially_planned = args
+                .into_iter()
+                .map(|a| match a {
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(SQLExpr::Lambda(
+                        lambda,
+                    ))) => {
+                        if !all_unique(&lambda.params) {
+                            return plan_err!(
+                                "lambda parameters names must be unique, got {}",
+                                lambda.params
+                            );
+                        }
+
+                        Ok(ExprOrLambda::Lambda(lambda))
+                    }
+                    _ => Ok(ExprOrLambda::Expr(self.sql_fn_arg_to_logical_expr(
+                        a,
+                        schema,
+                        planner_context,
+                    )?)),
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            let current_fields = partially_planned
+                .iter()
+                .map(|e| match e {
+                    ExprOrLambda::Expr(expr) => {
+                        Ok(ValueOrLambda::Value(expr.to_field(schema)?.1))
+                    }
+                    ExprOrLambda::Lambda(_lambda_function) => {
+                        Ok(ValueOrLambda::Lambda(()))
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            let coerced_values =
+                value_fields_with_higher_order_udf(&current_fields, fm.as_ref())?
+                    .into_iter()
+                    .filter_map(|arg| match arg {
+                        ValueOrLambda::Value(value) => Some(value),
+                        ValueOrLambda::Lambda(_lambda) => None,
+                    })
+                    .collect::<Vec<_>>();
+
+            // lambda_parameters refers only to lambdas and not to values, so instead
+            // of zipping it with partially_planned, we iterate over partially_planned and only
+            // consume from lambda_parameters when a given argument is a lambda
+            // to reconstruct the arguments list with the correct order
+            // this supports any value and lambda positioning including
+            // multiple lambdas interleaved with values
+            let mut lambda_parameters =
+                fm.lambda_parameters(&coerced_values)?.into_iter();
+
+            let num_lambdas = partially_planned.len() - coerced_values.len();
+
+            // functions can support multiple lambdas where some trailing ones are optional,
+            // but to simplify the implementor, lambda_parameters returns the parameters of all of them,
+            // so we can't do equality check. one example is spark reduce:
+            // https://spark.apache.org/docs/latest/api/sql/index.html#reduce
+            if lambda_parameters.len() < num_lambdas {
+                return plan_err!(
+                    "{} invocation defined {num_lambdas} but lambda_parameters returned only {}",
+                    fm.name(),
+                    lambda_parameters.len()
+                );
+            }
+
+            let args = partially_planned
+                .into_iter()
+                .map(|arg| match arg {
+                    ExprOrLambda::Expr(expr) => Ok(expr),
+                    ExprOrLambda::Lambda(lambda) => {
+                        let lambda_params =
+                            lambda_parameters.next().ok_or_else(|| {
+                                internal_datafusion_err!(
+                                    "lambda_parameters len should have been checked above"
+                                )
+                            })?;
+
+                        if lambda.params.len() > lambda_params.len() {
+                            return plan_err!(
+                                "lambda defined {} params but UDF support only {}",
+                                lambda.params.len(),
+                                lambda_params.len()
+                            );
+                        }
+
+                        let params =
+                            lambda.params.iter().map(|p| p.value.clone()).collect();
+
+                        let lambda_parameters = lambda_params
+                            .into_iter()
+                            .zip(&params)
+                            .map(|(f, n)| Arc::new(f.with_name(n)));
+
+                        let mut planner_context = planner_context
+                            .clone()
+                            .with_lambda_parameters(lambda_parameters);
+
+                        Ok(Expr::Lambda(Lambda {
+                            params,
+                            body: Box::new(self.sql_expr_to_logical_expr(
+                                *lambda.body,
+                                schema,
+                                &mut planner_context,
+                            )?),
+                        }))
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            let inner = HigherOrderFunction::new(fm, args);
+
+            if name.eq_ignore_ascii_case(inner.name()) {
+                return Ok(Expr::HigherOrderFunction(inner));
+            } else {
+                // If the function is called by an alias, a verbose string representation is created
+                // (e.g., "my_alias(arg1, arg2)") and the expression is wrapped in an `Alias`
+                // to ensure the output column name matches the user's query.
+                let arg_names = inner
+                    .args
+                    .iter()
+                    .map(|arg| arg.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let verbose_alias = format!("{name}({arg_names})");
+
+                return Ok(Expr::HigherOrderFunction(inner).alias(verbose_alias));
             }
         }
 
@@ -953,6 +1099,18 @@ impl<S: ContextProvider> SqlToRel<'_, S> {
             _ => {
                 plan_err!("unnest() can only be applied to array, struct and null")
             }
+        }
+    }
+}
+
+fn all_unique(params: &[sqlparser::ast::Ident]) -> bool {
+    match params.len() {
+        0 | 1 => true,
+        2 => params[0].value != params[1].value,
+        _ => {
+            let mut set = HashSet::with_capacity(params.len());
+
+            params.iter().all(|p| set.insert(p.value.as_str()))
         }
     }
 }

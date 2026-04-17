@@ -43,6 +43,7 @@ mod partition_evaluator;
 mod table_source;
 mod udaf;
 mod udf;
+mod udhof;
 mod udwf;
 
 pub mod arguments;
@@ -128,6 +129,10 @@ pub use udaf::{
 };
 pub use udf::{
     ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, StructFieldMapping,
+};
+pub use udhof::{
+    HigherOrderFunctionArgs, HigherOrderReturnFieldArgs, HigherOrderSignature,
+    HigherOrderTypeSignature, HigherOrderUDF, LambdaArgument, ValueOrLambda,
 };
 pub use udwf::{LimitEffect, ReversedUDWF, WindowUDF, WindowUDFImpl};
 pub use window_frame::{WindowFrame, WindowFrameBound, WindowFrameUnits};

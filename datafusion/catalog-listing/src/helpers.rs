@@ -85,10 +85,22 @@ pub fn expr_applicable_for_cols(col_names: &[&str], expr: &Expr) -> bool {
         | Expr::ScalarSubquery(_)
         | Expr::SetComparison(_)
         | Expr::GroupingSet(_)
-        | Expr::Case(_) => Ok(TreeNodeRecursion::Continue),
+        | Expr::Case(_)
+        | Expr::Lambda(_)
+        | Expr::LambdaVariable(_) => Ok(TreeNodeRecursion::Continue),
 
         Expr::ScalarFunction(scalar_function) => {
             match scalar_function.func.signature().volatility {
+                Volatility::Immutable => Ok(TreeNodeRecursion::Continue),
+                // TODO: Stable functions could be `applicable`, but that would require access to the context
+                Volatility::Stable | Volatility::Volatile => {
+                    is_applicable = false;
+                    Ok(TreeNodeRecursion::Stop)
+                }
+            }
+        }
+        Expr::HigherOrderFunction(hof) => {
+            match hof.func.signature().volatility {
                 Volatility::Immutable => Ok(TreeNodeRecursion::Continue),
                 // TODO: Stable functions could be `applicable`, but that would require access to the context
                 Volatility::Stable | Volatility::Volatile => {

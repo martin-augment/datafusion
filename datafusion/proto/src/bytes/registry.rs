@@ -38,6 +38,12 @@ impl FunctionRegistry for NoRegistry {
         )
     }
 
+    fn udhof(&self, name: &str) -> Result<Arc<dyn datafusion_expr::HigherOrderUDF>> {
+        plan_err!(
+            "No function registry provided to deserialize, so can not deserialize User Defined Higher Order Function '{name}'"
+        )
+    }
+
     fn udaf(&self, name: &str) -> Result<Arc<AggregateUDF>> {
         plan_err!(
             "No function registry provided to deserialize, so can not deserialize User Defined Aggregate Function '{name}'"
@@ -73,6 +79,10 @@ impl FunctionRegistry for NoRegistry {
 
     fn expr_planners(&self) -> Vec<Arc<dyn ExprPlanner>> {
         vec![]
+    }
+
+    fn udhofs(&self) -> HashSet<String> {
+        HashSet::new()
     }
 
     fn udafs(&self) -> HashSet<String> {

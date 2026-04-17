@@ -22,8 +22,8 @@ use datafusion::common::{TableReference, plan_err};
 use datafusion::config::ConfigOptions;
 use datafusion::error::Result;
 use datafusion::logical_expr::{
-    AggregateUDF, Expr, LogicalPlan, ScalarUDF, TableProviderFilterPushDown, TableSource,
-    WindowUDF,
+    AggregateUDF, Expr, HigherOrderUDF, LogicalPlan, ScalarUDF,
+    TableProviderFilterPushDown, TableSource, WindowUDF,
 };
 use datafusion::optimizer::{
     Analyzer, AnalyzerRule, Optimizer, OptimizerConfig, OptimizerContext, OptimizerRule,
@@ -155,6 +155,10 @@ impl ContextProvider for MyContextProvider {
         None
     }
 
+    fn get_higher_order_meta(&self, _name: &str) -> Option<Arc<dyn HigherOrderUDF>> {
+        None
+    }
+
     fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
         None
     }
@@ -172,6 +176,10 @@ impl ContextProvider for MyContextProvider {
     }
 
     fn udf_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn udhof_names(&self) -> Vec<String> {
         Vec::new()
     }
 
