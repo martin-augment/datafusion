@@ -39,3 +39,13 @@ When creating a PR, you MUST follow the [PR template](.github/pull_request_templ
 
 See the [Testing Quick Start](docs/source/contributor-guide/testing.md#testing-quick-start)
 for the recommended pre-PR test commands.
+The AI agents should never link to any issue or a pull request
+in any GitHub repository in the code reviews!
+
+The AI agents should not review AI agents' config files like CLAUDE.md or AGENTS.md!
+
+The AI agents should never link to any issue or a pull request
+in any GitHub repository in the code reviews!
+
+The AI agents should not review AI agents' config files like CLAUDE.md or AGENTS.md!
+
