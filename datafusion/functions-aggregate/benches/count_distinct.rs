@@ -18,12 +18,12 @@
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, Int8Array, Int16Array, Int64Array, UInt8Array, UInt16Array,
+    Array, ArrayRef, Int8Array, Int16Array, Int64Array, UInt8Array, UInt16Array,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use criterion::{Criterion, criterion_group, criterion_main};
 use datafusion_expr::function::AccumulatorArgs;
-use datafusion_expr::{Accumulator, AggregateUDFImpl};
+use datafusion_expr::{Accumulator, AggregateUDFImpl, EmitTo};
 use datafusion_functions_aggregate::count::Count;
 use datafusion_physical_expr::expressions::col;
 use rand::rngs::StdRng;
@@ -85,6 +85,30 @@ fn create_i16_array(n_distinct: usize) -> Int16Array {
     (0..BATCH_SIZE)
         .map(|_| Some(rng.random_range(-max_val..max_val)))
         .collect()
+}
+
+fn prepare_args(data_type: DataType) -> (Arc<Schema>, AccumulatorArgs<'static>) {
+    let schema = Arc::new(Schema::new(vec![Field::new("f", data_type, true)]));
+    let schema_leaked: &'static Schema = Box::leak(Box::new((*schema).clone()));
+    let expr = col("f", schema_leaked).unwrap();
+    let expr_leaked: &'static _ = Box::leak(Box::new(expr));
+    let return_field: Arc<Field> = Field::new("f", DataType::Int64, true).into();
+    let return_field_leaked: &'static _ = Box::leak(Box::new(return_field.clone()));
+    let expr_field = expr_leaked.return_field(schema_leaked).unwrap();
+    let expr_field_leaked: &'static _ = Box::leak(Box::new(expr_field));
+
+    let accumulator_args = AccumulatorArgs {
+        return_field: return_field_leaked.clone(),
+        schema: schema_leaked,
+        expr_fields: std::slice::from_ref(expr_field_leaked),
+        ignore_nulls: false,
+        order_bys: &[],
+        is_reversed: false,
+        name: "count(distinct f)",
+        is_distinct: true,
+        exprs: std::slice::from_ref(expr_leaked),
+    };
+    (schema, accumulator_args)
 }
 
 fn count_distinct_benchmark(c: &mut Criterion) {
@@ -150,5 +174,107 @@ fn count_distinct_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, count_distinct_benchmark);
+/// Create group indices with uniform distribution
+fn create_uniform_groups(num_groups: usize) -> Vec<usize> {
+    let mut rng = StdRng::seed_from_u64(42);
+    (0..BATCH_SIZE)
+        .map(|_| rng.random_range(0..num_groups))
+        .collect()
+}
+
+/// Create group indices with skewed distribution (80% in 20% of groups)
+fn create_skewed_groups(num_groups: usize) -> Vec<usize> {
+    let mut rng = StdRng::seed_from_u64(42);
+    let hot_groups = (num_groups / 5).max(1);
+    (0..BATCH_SIZE)
+        .map(|_| {
+            if rng.random_range(0..100) < 80 {
+                rng.random_range(0..hot_groups)
+            } else {
+                rng.random_range(0..num_groups)
+            }
+        })
+        .collect()
+}
+
+fn count_distinct_groups_benchmark(c: &mut Criterion) {
+    let count_fn = Count::new();
+
+    let group_counts = [100, 1000, 10000];
+    let cardinalities = [("low", 20), ("mid", 80), ("high", 99)];
+    let distributions = ["uniform", "skewed"];
+
+    for num_groups in group_counts {
+        for (card_name, distinct_pct) in cardinalities {
+            for dist in distributions {
+                let name = format!("g{num_groups}_{card_name}_{dist}");
+                let n_distinct = BATCH_SIZE * distinct_pct / 100;
+                let values = Arc::new(create_i64_array(n_distinct)) as ArrayRef;
+                let group_indices = if dist == "uniform" {
+                    create_uniform_groups(num_groups)
+                } else {
+                    create_skewed_groups(num_groups)
+                };
+
+                let (_schema, args) = prepare_args(DataType::Int64);
+
+                if count_fn.groups_accumulator_supported(args.clone()) {
+                    c.bench_function(&format!("count_distinct_groups {name}"), |b| {
+                        b.iter(|| {
+                            let mut acc =
+                                count_fn.create_groups_accumulator(args.clone()).unwrap();
+                            acc.update_batch(
+                                std::slice::from_ref(&values),
+                                &group_indices,
+                                None,
+                                num_groups,
+                            )
+                            .unwrap();
+                            acc.evaluate(EmitTo::All).unwrap()
+                        })
+                    });
+                } else {
+                    let arr = values.as_any().downcast_ref::<Int64Array>().unwrap();
+                    let mut group_rows: Vec<Vec<i64>> = vec![Vec::new(); num_groups];
+                    for (idx, &group_idx) in group_indices.iter().enumerate() {
+                        if arr.is_valid(idx) {
+                            group_rows[group_idx].push(arr.value(idx));
+                        }
+                    }
+                    let group_arrays: Vec<ArrayRef> = group_rows
+                        .iter()
+                        .map(|rows| Arc::new(Int64Array::from(rows.clone())) as ArrayRef)
+                        .collect();
+
+                    c.bench_function(&format!("count_distinct_groups {name}"), |b| {
+                        b.iter(|| {
+                            let mut accumulators: Vec<_> = (0..num_groups)
+                                .map(|_| prepare_accumulator(DataType::Int64))
+                                .collect();
+
+                            for (group_idx, batch) in group_arrays.iter().enumerate() {
+                                if !batch.is_empty() {
+                                    accumulators[group_idx]
+                                        .update_batch(std::slice::from_ref(batch))
+                                        .unwrap();
+                                }
+                            }
+
+                            let _results: Vec<_> = accumulators
+                                .iter_mut()
+                                .map(|acc| acc.evaluate().unwrap())
+                                .collect();
+                        })
+                    });
+                }
+            }
+        }
+    }
+}
+
+criterion_group!(
+    benches,
+    count_distinct_benchmark,
+    count_distinct_groups_benchmark
+);
 criterion_main!(benches);
