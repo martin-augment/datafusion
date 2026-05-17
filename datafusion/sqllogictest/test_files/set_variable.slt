@@ -395,7 +395,7 @@ datafusion.format.timestamp_format
 datafusion.format.timestamp_tz_format
 datafusion.format.types_info
 
-# date_format: SET / SHOW / RESET / SHOW
+# date_format: query result display uses session format (default: %Y-%m-%d)
 statement ok
 SET datafusion.format.date_format = '%d-%m-%Y'
 
@@ -403,6 +403,11 @@ query TT
 SHOW datafusion.format.date_format
 ----
 datafusion.format.date_format %d-%m-%Y
+
+query D
+SELECT DATE '2026-04-07'
+----
+07-04-2026
 
 statement ok
 RESET datafusion.format.date_format
@@ -412,14 +417,23 @@ SHOW datafusion.format.date_format
 ----
 datafusion.format.date_format %Y-%m-%d
 
-# datetime_format
+query D
+SELECT DATE '2026-04-07'
+----
+2026-04-07
+
+# datetime_format (default: %Y-%m-%dT%H:%M:%S%.f)
 statement ok
-SET datafusion.format.datetime_format = '%Y/%m/%d %H:%M:%S'
+SET datafusion.format.datetime_format = '%d-%m-%YT%H:%M:%S'
 
 query TT
 SHOW datafusion.format.datetime_format
 ----
-datafusion.format.datetime_format %Y/%m/%d %H:%M:%S
+datafusion.format.datetime_format %d-%m-%YT%H:%M:%S
+
+# DATETIME literals are not implemented in the SQL parser yet.
+query error DataFusion error: This feature is not implemented: Unsupported SQL type DATETIME
+SELECT DATETIME '2026-04-07 00:10:00';
 
 statement ok
 RESET datafusion.format.datetime_format
@@ -429,14 +443,19 @@ SHOW datafusion.format.datetime_format
 ----
 datafusion.format.datetime_format %Y-%m-%dT%H:%M:%S%.f
 
-# timestamp_format
+# timestamp_format (default: %Y-%m-%dT%H:%M:%S%.f)
 statement ok
-SET datafusion.format.timestamp_format = '%FT%H:%M:%S'
+SET datafusion.format.timestamp_format = '%d-%m-%YT%H:%M:%S'
 
 query TT
 SHOW datafusion.format.timestamp_format
 ----
-datafusion.format.timestamp_format %FT%H:%M:%S
+datafusion.format.timestamp_format %d-%m-%YT%H:%M:%S
+
+query P
+SELECT TIMESTAMP '2026-04-07 13:31:00';
+----
+07-04-2026T13:31:00
 
 statement ok
 RESET datafusion.format.timestamp_format
@@ -446,7 +465,12 @@ SHOW datafusion.format.timestamp_format
 ----
 datafusion.format.timestamp_format %Y-%m-%dT%H:%M:%S%.f
 
-# timestamp_tz_format (default NULL)
+query P
+SELECT TIMESTAMP '2026-04-07 13:31:00';
+----
+2026-04-07T13:31:00
+
+# timestamp_tz_format (default: NULL)
 statement ok
 SET datafusion.format.timestamp_tz_format = '%Y-%m-%d %H:%M:%S %z'
 
@@ -454,6 +478,11 @@ query TT
 SHOW datafusion.format.timestamp_tz_format
 ----
 datafusion.format.timestamp_tz_format %Y-%m-%d %H:%M:%S %z
+
+query P
+SELECT TIMESTAMPTZ '2026-04-07 13:31:00';
+----
+2026-04-07T13:31:00
 
 statement ok
 RESET datafusion.format.timestamp_tz_format
@@ -463,14 +492,19 @@ SHOW datafusion.format.timestamp_tz_format
 ----
 datafusion.format.timestamp_tz_format NULL
 
-# time_format
+# time_format (default: %H:%M:%S%.f)
 statement ok
-SET datafusion.format.time_format = '%H-%M-%S'
+SET datafusion.format.time_format = '%S-%M-%H'
 
 query TT
 SHOW datafusion.format.time_format
 ----
-datafusion.format.time_format %H-%M-%S
+datafusion.format.time_format %S-%M-%H
+
+query D
+SELECT TIME '01:02:12.123' AS time;
+----
+12-02-01
 
 statement ok
 RESET datafusion.format.time_format
@@ -480,7 +514,12 @@ SHOW datafusion.format.time_format
 ----
 datafusion.format.time_format %H:%M:%S%.f
 
-# duration_format: values are normalized to lowercase; ISO8601 and pretty are valid
+query D
+SELECT TIME '01:02:12.123' AS time;
+----
+01:02:12.123
+
+# duration_format: (default: pretty) values are normalized to lowercase; ISO8601 and pretty are valid
 statement ok
 SET datafusion.format.duration_format = ISO8601
 
@@ -488,6 +527,12 @@ query TT
 SHOW datafusion.format.duration_format
 ----
 datafusion.format.duration_format iso8601
+
+# Session duration_format controls display of Duration columns (not SQL INTERVAL)
+query ?
+SELECT arrow_cast(3661, 'Duration(Second)');
+----
+PT3661S
 
 statement ok
 SET datafusion.format.duration_format to 'PRETTY'
@@ -497,6 +542,11 @@ SHOW datafusion.format.duration_format
 ----
 datafusion.format.duration_format pretty
 
+query ?
+SELECT arrow_cast(3661, 'Duration(Second)');
+----
+0 days 1 hours 1 mins 1 secs
+
 statement ok
 RESET datafusion.format.duration_format
 
@@ -505,7 +555,29 @@ SHOW datafusion.format.duration_format
 ----
 datafusion.format.duration_format pretty
 
-# null display string
+query ?
+SELECT arrow_cast(3661, 'Duration(Second)');
+----
+0 days 1 hours 1 mins 1 secs
+
+# Case-insensitive duration_format variable name
+statement ok
+SET datafusion.FORMAT.DURATION_FORMAT = 'ISO8601'
+
+query TT
+SHOW datafusion.format.duration_format
+----
+datafusion.format.duration_format iso8601
+
+query ?
+SELECT arrow_cast(61, 'Duration(Second)');
+----
+PT61S
+
+statement ok
+RESET datafusion.format.duration_format
+
+# null display string (default: (empty))
 statement ok
 SET datafusion.format.null = 'NuLL'
 
@@ -522,7 +594,7 @@ SHOW datafusion.format.null
 ----
 datafusion.format.null (empty)
 
-# safe
+# safe (default: true)
 statement ok
 SET datafusion.format.safe = false
 
@@ -539,7 +611,7 @@ SHOW datafusion.format.safe
 ----
 datafusion.format.safe true
 
-# types_info
+# types_info (default: false)
 statement ok
 SET datafusion.format.types_info to true
 
@@ -565,6 +637,11 @@ SHOW datafusion.format.date_format
 ----
 datafusion.format.date_format %m/%d/%Y
 
+query D
+SELECT DATE '2026-04-07';
+----
+04/07/2026
+
 statement ok
 RESET datafusion.format.date_format
 
@@ -572,6 +649,11 @@ query TT
 SHOW datafusion.format.date_format
 ----
 datafusion.format.date_format %Y-%m-%d
+
+query D
+SELECT DATE '2026-04-07';
+----
+2026-04-07
 
 # Invalid format option name
 statement error DataFusion error: Invalid or Unsupported Configuration: Config value "unknown_option" not found on FormatOptions

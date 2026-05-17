@@ -16,6 +16,8 @@
 // under the License.
 
 use datafusion::common::{Result, exec_datafusion_err};
+use datafusion::config::{ConfigField, FormatOptions};
+use datafusion::prelude::SessionContext;
 use itertools::Itertools;
 use log::Level::Warn;
 use log::{info, log_enabled, warn};
@@ -139,6 +141,13 @@ pub fn df_value_validator(
 
 pub fn is_spark_path(relative_path: &Path) -> bool {
     relative_path.starts_with("spark/")
+}
+
+// Get passed custom FormatOptions by SessionContext to be used for sqllogictest
+pub fn get_format_options(ctx: &SessionContext) -> Result<FormatOptions> {
+    let mut df_format = ctx.state().config().options().format.clone();
+    df_format.set("null", "NULL")?;
+    Ok(df_format)
 }
 
 #[cfg(test)]

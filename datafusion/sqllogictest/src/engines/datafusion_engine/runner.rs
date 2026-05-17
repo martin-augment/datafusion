@@ -22,7 +22,7 @@ use std::{path::PathBuf, time::Duration};
 use super::{DFSqlLogicTestError, error::Result, normalize};
 use crate::engines::currently_executed_sql::CurrentlyExecutingSqlTracker;
 use crate::engines::output::{DFColumnType, DFOutput};
-use crate::is_spark_path;
+use crate::{get_format_options, is_spark_path};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::physical_plan::common::collect;
@@ -212,7 +212,12 @@ async fn run_query(
     let stream = execute_stream(plan, task_ctx)?;
     let types = normalize::convert_schema_to_types(stream.schema().fields());
     let results: Vec<RecordBatch> = collect(stream).await?;
-    let rows = normalize::convert_batches(&schema, results, is_spark_path)?;
+
+    let df_format = get_format_options(ctx)?;
+    let arrow_format: arrow::util::display::FormatOptions<'_> =
+        (&df_format).try_into()?;
+    let rows =
+        normalize::convert_batches(&schema, results, is_spark_path, &arrow_format)?;
 
     if rows.is_empty() && types.is_empty() {
         Ok(DBOutput::StatementComplete(0))

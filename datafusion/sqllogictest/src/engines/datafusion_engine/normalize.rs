@@ -20,10 +20,9 @@ use super::error::{DFSqlLogicTestError, Result};
 use crate::engines::output::DFColumnType;
 use arrow::array::{Array, AsArray};
 use arrow::datatypes::{Fields, Schema};
-use arrow::util::display::ArrayFormatter;
+use arrow::util::display::{ArrayFormatter, FormatOptions};
 use arrow::{array, array::ArrayRef, datatypes::DataType, record_batch::RecordBatch};
 use datafusion::common::internal_datafusion_err;
-use datafusion::config::ConfigField;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
@@ -32,6 +31,7 @@ pub fn convert_batches(
     schema: &Schema,
     batches: Vec<RecordBatch>,
     is_spark_path: bool,
+    format_options: &FormatOptions<'_>,
 ) -> Result<Vec<Vec<String>>> {
     let mut rows = vec![];
     for batch in batches {
@@ -50,7 +50,7 @@ pub fn convert_batches(
                 batch
                     .columns()
                     .iter()
-                    .map(|col| cell_to_string(col, row, is_spark_path))
+                    .map(|col| cell_to_string(col, row, is_spark_path, format_options))
                     .collect::<Result<Vec<String>>>()
             })
             .collect::<Result<Vec<Vec<String>>>>()?
@@ -185,7 +185,12 @@ macro_rules! get_row_value {
 /// [NULL Values and empty strings]: https://duckdb.org/dev/sqllogictest/result_verification#null-values-and-empty-strings
 ///
 /// Floating numbers are rounded to have a consistent representation with the Postgres runner.
-pub fn cell_to_string(col: &ArrayRef, row: usize, is_spark_path: bool) -> Result<String> {
+pub fn cell_to_string(
+    col: &ArrayRef,
+    row: usize,
+    is_spark_path: bool,
+    format_options: &FormatOptions<'_>,
+) -> Result<String> {
     if col.is_null(row) {
         // represent any null value with the string "NULL"
         Ok(NULL_STR.to_string())
@@ -233,18 +238,15 @@ pub fn cell_to_string(col: &ArrayRef, row: usize, is_spark_path: bool) -> Result
             DataType::Dictionary(_, _) => {
                 let dict = col.as_any_dictionary();
                 let key = dict.normalized_keys()[row];
-                Ok(cell_to_string(dict.values(), key, is_spark_path)?)
+                Ok(cell_to_string(
+                    dict.values(),
+                    key,
+                    is_spark_path,
+                    format_options,
+                )?)
             }
             _ => {
-                let mut datafusion_format_options =
-                    datafusion::config::FormatOptions::default();
-
-                datafusion_format_options.set("null", "NULL").unwrap();
-
-                let arrow_format_options: arrow::util::display::FormatOptions =
-                    (&datafusion_format_options).try_into().unwrap();
-
-                let f = ArrayFormatter::try_new(col.as_ref(), &arrow_format_options)?;
+                let f = ArrayFormatter::try_new(col.as_ref(), format_options)?;
 
                 Ok(f.value(row).to_string())
             }

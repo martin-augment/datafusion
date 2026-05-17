@@ -21,9 +21,12 @@ use std::{path::PathBuf, time::Duration};
 use crate::engines::currently_executed_sql::CurrentlyExecutingSqlTracker;
 use crate::engines::datafusion_engine::Result;
 use crate::engines::output::{DFColumnType, DFOutput};
-use crate::{DFSqlLogicTestError, convert_batches, convert_schema_to_types};
+use crate::{
+    DFSqlLogicTestError, convert_batches, convert_schema_to_types, get_format_options,
+};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
+use datafusion::config::ConfigField;
 use datafusion::logical_expr::LogicalPlan;
 use datafusion::physical_plan::common::collect;
 use datafusion::physical_plan::execute_stream;
@@ -166,7 +169,11 @@ async fn run_query_substrait_round_trip(
     let stream = execute_stream(physical_plan, task_ctx)?;
     let types = convert_schema_to_types(stream.schema().fields());
     let results: Vec<RecordBatch> = collect(stream).await?;
-    let rows = convert_batches(&schema, results, false)?;
+
+    let df_format = get_format_options(ctx)?;
+    let arrow_format: arrow::util::display::FormatOptions<'_> =
+        (&df_format).try_into()?;
+    let rows = convert_batches(&schema, results, false, &arrow_format)?;
 
     if rows.is_empty() && types.is_empty() {
         Ok(DBOutput::StatementComplete(0))
