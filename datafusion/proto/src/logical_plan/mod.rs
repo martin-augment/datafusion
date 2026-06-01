@@ -795,10 +795,15 @@ impl AsLogicalPlan for LogicalPlanNode {
                             create_extern_table.name.as_ref(),
                             "CreateExternalTable",
                         )?,
-                        create_extern_table.location.clone(),
+                        create_extern_table
+                            .locations
+                            .first()
+                            .cloned()
+                            .unwrap_or_default(),
                         create_extern_table.file_type.clone(),
                         pb_schema.try_into()?,
                     )
+                    .with_locations(create_extern_table.locations.clone())
                     .with_partition_cols(create_extern_table.table_partition_cols.clone())
                     .with_order_exprs(order_exprs)
                     .with_if_not_exists(create_extern_table.if_not_exists)
@@ -1774,7 +1779,7 @@ impl AsLogicalPlan for LogicalPlanNode {
             LogicalPlan::Ddl(DdlStatement::CreateExternalTable(
                 CreateExternalTable {
                     name,
-                    location,
+                    locations,
                     file_type,
                     schema: df_schema,
                     table_partition_cols,
@@ -1810,7 +1815,7 @@ impl AsLogicalPlan for LogicalPlanNode {
                             name: Some(protobuf::TableReference::from_proto(
                                 name.clone(),
                             )),
-                            location: location.clone(),
+                            locations: locations.clone(),
                             file_type: file_type.clone(),
                             schema: Some(df_schema.try_into()?),
                             table_partition_cols: table_partition_cols.clone(),
