@@ -58,3 +58,8 @@ Repository-specific agent skills live under `.ai/skills/`. Each subdirectory is
 a single skill with a `SKILL.md` (YAML frontmatter + body). Check that
 directory for applicable skills before working on a task; new skills go in
 `.ai/skills/<skill-name>/SKILL.md`.
+When making a code review never link to any issue or a pull request
+in any GitHub repository!
+
+Do not review AI agents' config files like CLAUDE.md, AGENTS.md or rules.md!
+
