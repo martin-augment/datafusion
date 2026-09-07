@@ -112,6 +112,67 @@ fn roundtrip_parquet_exec_with_pruning_predicate() -> Result<()> {
     roundtrip_test(DataSourceExec::from_data_source(scan_config))
 }
 
+#[tokio::test]
+async fn roundtrip_parquet_exec_with_sort_pushdown() -> Result<()> {
+    let ctx = all_types_context().await?;
+    let plan = ctx
+        .sql("SELECT id FROM alltypes_plain ORDER BY id DESC NULLS LAST LIMIT 5")
+        .await?
+        .create_physical_plan()
+        .await?;
+    let before = displayable(plan.as_ref()).indent(true).to_string();
+    assert!(
+        before.contains("sort_order_for_reorder=[id@0 DESC NULLS LAST]")
+            && before.contains("reverse_row_groups=true"),
+        "expected sort pushdown in plan:\n{before}"
+    );
+
+    let roundtripped = roundtrip_test_and_return(
+        plan,
+        &ctx,
+        &DefaultPhysicalExtensionCodec {},
+        &DefaultPhysicalProtoConverter {},
+    )?;
+    let after = displayable(roundtripped.as_ref()).indent(true).to_string();
+    pretty_assertions::assert_eq!(before, after);
+    Ok(())
+}
+
+#[test]
+fn file_scan_rejects_zero_batch_size() -> Result<()> {
+    let schema = Arc::new(Schema::empty());
+    let scan_config = FileScanConfigBuilder::new(
+        ObjectStoreUrl::local_filesystem(),
+        Arc::new(ParquetSource::new(schema)),
+    )
+    .build();
+    let codec = DefaultPhysicalExtensionCodec {};
+    let mut node = PhysicalPlanNode::try_from_physical_plan(
+        DataSourceExec::from_data_source(scan_config),
+        &codec,
+    )?;
+    let Some(protobuf::physical_plan_node::PhysicalPlanType::ParquetScan(scan)) =
+        node.physical_plan_type.as_mut()
+    else {
+        return internal_err!("Expected ParquetScan node");
+    };
+    scan.base_conf
+        .as_mut()
+        .expect("Parquet scan has a base config")
+        .batch_size = Some(0);
+
+    let ctx = SessionContext::new();
+    let err = node
+        .try_into_physical_plan(ctx.task_ctx().as_ref(), &codec)
+        .expect_err("zero file scan batch size must fail");
+    assert!(
+        err.to_string()
+            .contains("FileScanConfig: batch_size must be greater than 0"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
 #[test]
 fn roundtrip_parquet_exec_attaches_cached_reader_factory_after_roundtrip() -> Result<()> {
     let file_schema =

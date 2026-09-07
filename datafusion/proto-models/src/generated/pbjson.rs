@@ -1019,6 +1019,12 @@ impl serde::Serialize for AnalyzeExecNode {
         if self.format != 0 {
             len += 1;
         }
+        if self.has_metric_types {
+            len += 1;
+        }
+        if !self.metric_types.is_empty() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("datafusion.AnalyzeExecNode", len)?;
         if self.verbose {
             struct_ser.serialize_field("verbose", &self.verbose)?;
@@ -1043,6 +1049,16 @@ impl serde::Serialize for AnalyzeExecNode {
                 .map_err(|_| serde::ser::Error::custom(format!("Invalid variant {}", self.format)))?;
             struct_ser.serialize_field("format", &v)?;
         }
+        if self.has_metric_types {
+            struct_ser.serialize_field("hasMetricTypes", &self.has_metric_types)?;
+        }
+        if !self.metric_types.is_empty() {
+            let v = self.metric_types.iter().cloned().map(|v| {
+                super::datafusion_common::MetricType::try_from(v)
+                    .map_err(|_| serde::ser::Error::custom(format!("Invalid variant {}", v)))
+                }).collect::<std::result::Result<Vec<_>, _>>()?;
+            struct_ser.serialize_field("metricTypes", &v)?;
+        }
         struct_ser.end()
     }
 }
@@ -1063,6 +1079,10 @@ impl<'de> serde::Deserialize<'de> for AnalyzeExecNode {
             "metric_categories",
             "metricCategories",
             "format",
+            "has_metric_types",
+            "hasMetricTypes",
+            "metric_types",
+            "metricTypes",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -1074,6 +1094,8 @@ impl<'de> serde::Deserialize<'de> for AnalyzeExecNode {
             HasMetricCategories,
             MetricCategories,
             Format,
+            HasMetricTypes,
+            MetricTypes,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -1102,6 +1124,8 @@ impl<'de> serde::Deserialize<'de> for AnalyzeExecNode {
                             "hasMetricCategories" | "has_metric_categories" => Ok(GeneratedField::HasMetricCategories),
                             "metricCategories" | "metric_categories" => Ok(GeneratedField::MetricCategories),
                             "format" => Ok(GeneratedField::Format),
+                            "hasMetricTypes" | "has_metric_types" => Ok(GeneratedField::HasMetricTypes),
+                            "metricTypes" | "metric_types" => Ok(GeneratedField::MetricTypes),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -1128,6 +1152,8 @@ impl<'de> serde::Deserialize<'de> for AnalyzeExecNode {
                 let mut has_metric_categories__ = None;
                 let mut metric_categories__ = None;
                 let mut format__ = None;
+                let mut has_metric_types__ = None;
+                let mut metric_types__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::Verbose => {
@@ -1172,6 +1198,18 @@ impl<'de> serde::Deserialize<'de> for AnalyzeExecNode {
                             }
                             format__ = Some(map_.next_value::<super::datafusion_common::ExplainFormat>()? as i32);
                         }
+                        GeneratedField::HasMetricTypes => {
+                            if has_metric_types__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("hasMetricTypes"));
+                            }
+                            has_metric_types__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::MetricTypes => {
+                            if metric_types__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("metricTypes"));
+                            }
+                            metric_types__ = Some(map_.next_value::<Vec<super::datafusion_common::MetricType>>()?.into_iter().map(|x| x as i32).collect());
+                        }
                     }
                 }
                 Ok(AnalyzeExecNode {
@@ -1182,6 +1220,8 @@ impl<'de> serde::Deserialize<'de> for AnalyzeExecNode {
                     has_metric_categories: has_metric_categories__.unwrap_or_default(),
                     metric_categories: metric_categories__.unwrap_or_default(),
                     format: format__.unwrap_or_default(),
+                    has_metric_types: has_metric_types__.unwrap_or_default(),
+                    metric_types: metric_types__.unwrap_or_default(),
                 })
             }
         }
@@ -16185,6 +16225,12 @@ impl serde::Serialize for ParquetScanExecNode {
         if self.parquet_options.is_some() {
             len += 1;
         }
+        if self.sort_order_for_reorder.is_some() {
+            len += 1;
+        }
+        if self.reverse_row_groups {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("datafusion.ParquetScanExecNode", len)?;
         if let Some(v) = self.base_conf.as_ref() {
             struct_ser.serialize_field("baseConf", v)?;
@@ -16194,6 +16240,12 @@ impl serde::Serialize for ParquetScanExecNode {
         }
         if let Some(v) = self.parquet_options.as_ref() {
             struct_ser.serialize_field("parquetOptions", v)?;
+        }
+        if let Some(v) = self.sort_order_for_reorder.as_ref() {
+            struct_ser.serialize_field("sortOrderForReorder", v)?;
+        }
+        if self.reverse_row_groups {
+            struct_ser.serialize_field("reverseRowGroups", &self.reverse_row_groups)?;
         }
         struct_ser.end()
     }
@@ -16210,6 +16262,10 @@ impl<'de> serde::Deserialize<'de> for ParquetScanExecNode {
             "predicate",
             "parquet_options",
             "parquetOptions",
+            "sort_order_for_reorder",
+            "sortOrderForReorder",
+            "reverse_row_groups",
+            "reverseRowGroups",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -16217,6 +16273,8 @@ impl<'de> serde::Deserialize<'de> for ParquetScanExecNode {
             BaseConf,
             Predicate,
             ParquetOptions,
+            SortOrderForReorder,
+            ReverseRowGroups,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -16241,6 +16299,8 @@ impl<'de> serde::Deserialize<'de> for ParquetScanExecNode {
                             "baseConf" | "base_conf" => Ok(GeneratedField::BaseConf),
                             "predicate" => Ok(GeneratedField::Predicate),
                             "parquetOptions" | "parquet_options" => Ok(GeneratedField::ParquetOptions),
+                            "sortOrderForReorder" | "sort_order_for_reorder" => Ok(GeneratedField::SortOrderForReorder),
+                            "reverseRowGroups" | "reverse_row_groups" => Ok(GeneratedField::ReverseRowGroups),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -16263,6 +16323,8 @@ impl<'de> serde::Deserialize<'de> for ParquetScanExecNode {
                 let mut base_conf__ = None;
                 let mut predicate__ = None;
                 let mut parquet_options__ = None;
+                let mut sort_order_for_reorder__ = None;
+                let mut reverse_row_groups__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::BaseConf => {
@@ -16283,12 +16345,26 @@ impl<'de> serde::Deserialize<'de> for ParquetScanExecNode {
                             }
                             parquet_options__ = map_.next_value()?;
                         }
+                        GeneratedField::SortOrderForReorder => {
+                            if sort_order_for_reorder__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("sortOrderForReorder"));
+                            }
+                            sort_order_for_reorder__ = map_.next_value()?;
+                        }
+                        GeneratedField::ReverseRowGroups => {
+                            if reverse_row_groups__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("reverseRowGroups"));
+                            }
+                            reverse_row_groups__ = Some(map_.next_value()?);
+                        }
                     }
                 }
                 Ok(ParquetScanExecNode {
                     base_conf: base_conf__,
                     predicate: predicate__,
                     parquet_options: parquet_options__,
+                    sort_order_for_reorder: sort_order_for_reorder__,
+                    reverse_row_groups: reverse_row_groups__.unwrap_or_default(),
                 })
             }
         }
@@ -20582,6 +20658,9 @@ impl serde::Serialize for PhysicalPlanNode {
                 physical_plan_node::PhysicalPlanType::ScalarSubquery(v) => {
                     struct_ser.serialize_field("scalarSubquery", v)?;
                 }
+                physical_plan_node::PhysicalPlanType::PiecewiseMergeJoin(v) => {
+                    struct_ser.serialize_field("piecewiseMergeJoin", v)?;
+                }
             }
         }
         struct_ser.end()
@@ -20654,6 +20733,8 @@ impl<'de> serde::Deserialize<'de> for PhysicalPlanNode {
             "arrowScan",
             "scalar_subquery",
             "scalarSubquery",
+            "piecewise_merge_join",
+            "piecewiseMergeJoin",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -20696,6 +20777,7 @@ impl<'de> serde::Deserialize<'de> for PhysicalPlanNode {
             Buffer,
             ArrowScan,
             ScalarSubquery,
+            PiecewiseMergeJoin,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -20755,6 +20837,7 @@ impl<'de> serde::Deserialize<'de> for PhysicalPlanNode {
                             "buffer" => Ok(GeneratedField::Buffer),
                             "arrowScan" | "arrow_scan" => Ok(GeneratedField::ArrowScan),
                             "scalarSubquery" | "scalar_subquery" => Ok(GeneratedField::ScalarSubquery),
+                            "piecewiseMergeJoin" | "piecewise_merge_join" => Ok(GeneratedField::PiecewiseMergeJoin),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -21041,6 +21124,13 @@ impl<'de> serde::Deserialize<'de> for PhysicalPlanNode {
                                 return Err(serde::de::Error::duplicate_field("scalarSubquery"));
                             }
                             physical_plan_type__ = map_.next_value::<::std::option::Option<_>>()?.map(physical_plan_node::PhysicalPlanType::ScalarSubquery)
+;
+                        }
+                        GeneratedField::PiecewiseMergeJoin => {
+                            if physical_plan_type__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("piecewiseMergeJoin"));
+                            }
+                            physical_plan_type__ = map_.next_value::<::std::option::Option<_>>()?.map(physical_plan_node::PhysicalPlanType::PiecewiseMergeJoin)
 ;
                         }
                     }
@@ -21381,6 +21471,9 @@ impl serde::Serialize for PhysicalScalarSubqueryExprNode {
         if self.index != 0 {
             len += 1;
         }
+        if !self.metadata.is_empty() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("datafusion.PhysicalScalarSubqueryExprNode", len)?;
         if let Some(v) = self.data_type.as_ref() {
             struct_ser.serialize_field("dataType", v)?;
@@ -21390,6 +21483,9 @@ impl serde::Serialize for PhysicalScalarSubqueryExprNode {
         }
         if self.index != 0 {
             struct_ser.serialize_field("index", &self.index)?;
+        }
+        if !self.metadata.is_empty() {
+            struct_ser.serialize_field("metadata", &self.metadata)?;
         }
         struct_ser.end()
     }
@@ -21405,6 +21501,7 @@ impl<'de> serde::Deserialize<'de> for PhysicalScalarSubqueryExprNode {
             "dataType",
             "nullable",
             "index",
+            "metadata",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -21412,6 +21509,7 @@ impl<'de> serde::Deserialize<'de> for PhysicalScalarSubqueryExprNode {
             DataType,
             Nullable,
             Index,
+            Metadata,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -21436,6 +21534,7 @@ impl<'de> serde::Deserialize<'de> for PhysicalScalarSubqueryExprNode {
                             "dataType" | "data_type" => Ok(GeneratedField::DataType),
                             "nullable" => Ok(GeneratedField::Nullable),
                             "index" => Ok(GeneratedField::Index),
+                            "metadata" => Ok(GeneratedField::Metadata),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -21458,6 +21557,7 @@ impl<'de> serde::Deserialize<'de> for PhysicalScalarSubqueryExprNode {
                 let mut data_type__ = None;
                 let mut nullable__ = None;
                 let mut index__ = None;
+                let mut metadata__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::DataType => {
@@ -21480,12 +21580,21 @@ impl<'de> serde::Deserialize<'de> for PhysicalScalarSubqueryExprNode {
                                 Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
                             ;
                         }
+                        GeneratedField::Metadata => {
+                            if metadata__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("metadata"));
+                            }
+                            metadata__ = Some(
+                                map_.next_value::<std::collections::HashMap<_, _>>()?
+                            );
+                        }
                     }
                 }
                 Ok(PhysicalScalarSubqueryExprNode {
                     data_type: data_type__,
                     nullable: nullable__.unwrap_or_default(),
                     index: index__.unwrap_or_default(),
+                    metadata: metadata__.unwrap_or_default(),
                 })
             }
         }
@@ -22455,6 +22564,209 @@ impl<'de> serde::Deserialize<'de> for PhysicalWindowExprNode {
             }
         }
         deserializer.deserialize_struct("datafusion.PhysicalWindowExprNode", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for PiecewiseMergeJoinExecNode {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.buffered.is_some() {
+            len += 1;
+        }
+        if self.streamed.is_some() {
+            len += 1;
+        }
+        if self.on_buffered.is_some() {
+            len += 1;
+        }
+        if self.on_streamed.is_some() {
+            len += 1;
+        }
+        if !self.operator.is_empty() {
+            len += 1;
+        }
+        if self.join_type != 0 {
+            len += 1;
+        }
+        if self.num_partitions != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("datafusion.PiecewiseMergeJoinExecNode", len)?;
+        if let Some(v) = self.buffered.as_ref() {
+            struct_ser.serialize_field("buffered", v)?;
+        }
+        if let Some(v) = self.streamed.as_ref() {
+            struct_ser.serialize_field("streamed", v)?;
+        }
+        if let Some(v) = self.on_buffered.as_ref() {
+            struct_ser.serialize_field("onBuffered", v)?;
+        }
+        if let Some(v) = self.on_streamed.as_ref() {
+            struct_ser.serialize_field("onStreamed", v)?;
+        }
+        if !self.operator.is_empty() {
+            struct_ser.serialize_field("operator", &self.operator)?;
+        }
+        if self.join_type != 0 {
+            let v = super::datafusion_common::JoinType::try_from(self.join_type)
+                .map_err(|_| serde::ser::Error::custom(format!("Invalid variant {}", self.join_type)))?;
+            struct_ser.serialize_field("joinType", &v)?;
+        }
+        if self.num_partitions != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("numPartitions", ToString::to_string(&self.num_partitions).as_str())?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for PiecewiseMergeJoinExecNode {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "buffered",
+            "streamed",
+            "on_buffered",
+            "onBuffered",
+            "on_streamed",
+            "onStreamed",
+            "operator",
+            "join_type",
+            "joinType",
+            "num_partitions",
+            "numPartitions",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Buffered,
+            Streamed,
+            OnBuffered,
+            OnStreamed,
+            Operator,
+            JoinType,
+            NumPartitions,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "buffered" => Ok(GeneratedField::Buffered),
+                            "streamed" => Ok(GeneratedField::Streamed),
+                            "onBuffered" | "on_buffered" => Ok(GeneratedField::OnBuffered),
+                            "onStreamed" | "on_streamed" => Ok(GeneratedField::OnStreamed),
+                            "operator" => Ok(GeneratedField::Operator),
+                            "joinType" | "join_type" => Ok(GeneratedField::JoinType),
+                            "numPartitions" | "num_partitions" => Ok(GeneratedField::NumPartitions),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = PiecewiseMergeJoinExecNode;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct datafusion.PiecewiseMergeJoinExecNode")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<PiecewiseMergeJoinExecNode, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut buffered__ = None;
+                let mut streamed__ = None;
+                let mut on_buffered__ = None;
+                let mut on_streamed__ = None;
+                let mut operator__ = None;
+                let mut join_type__ = None;
+                let mut num_partitions__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Buffered => {
+                            if buffered__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("buffered"));
+                            }
+                            buffered__ = map_.next_value()?;
+                        }
+                        GeneratedField::Streamed => {
+                            if streamed__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("streamed"));
+                            }
+                            streamed__ = map_.next_value()?;
+                        }
+                        GeneratedField::OnBuffered => {
+                            if on_buffered__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("onBuffered"));
+                            }
+                            on_buffered__ = map_.next_value()?;
+                        }
+                        GeneratedField::OnStreamed => {
+                            if on_streamed__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("onStreamed"));
+                            }
+                            on_streamed__ = map_.next_value()?;
+                        }
+                        GeneratedField::Operator => {
+                            if operator__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("operator"));
+                            }
+                            operator__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::JoinType => {
+                            if join_type__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("joinType"));
+                            }
+                            join_type__ = Some(map_.next_value::<super::datafusion_common::JoinType>()? as i32);
+                        }
+                        GeneratedField::NumPartitions => {
+                            if num_partitions__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("numPartitions"));
+                            }
+                            num_partitions__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(PiecewiseMergeJoinExecNode {
+                    buffered: buffered__,
+                    streamed: streamed__,
+                    on_buffered: on_buffered__,
+                    on_streamed: on_streamed__,
+                    operator: operator__.unwrap_or_default(),
+                    join_type: join_type__.unwrap_or_default(),
+                    num_partitions: num_partitions__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("datafusion.PiecewiseMergeJoinExecNode", FIELDS, GeneratedVisitor)
     }
 }
 impl serde::Serialize for PlaceholderNode {
