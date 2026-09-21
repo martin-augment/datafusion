@@ -21,12 +21,13 @@ jobs:
           git fetch origin "${{ env.PULL_REQUEST_HEAD_REF }}"
           git fetch origin "${{ env.PULL_REQUEST_BASE_REF }}"
           git checkout "${{ env.PULL_REQUEST_HEAD_REF }}"
-          git diff "origin/${{ env.PULL_REQUEST_BASE_REF }}" > "diff.txt"
+          git diff "origin/${{ env.PULL_REQUEST_BASE_REF }}" > "diff.diff"
           {
             echo "pull_request_diff<<EOF";
-            cat "diff.txt";
+            cat "diff.diff";
             echo 'EOF';
           } >> $GITHUB_OUTPUT
+          cat diff.diff
       - uses: rubensflinco/gemini-code-review-action@1.0.5
         name: "Code Review by Gemini AI"
         id: review
