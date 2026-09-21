@@ -1,0 +1,51 @@
+name: DeepSeek Code Review
+
+# WARNING: `pull_request` from forks runs with read-only GITHUB_TOKEN.
+# The code-review action cannot post comments on fork PRs with this trigger.
+# Option A (safer): Accept no AI review on fork PRs. Document this limitation.
+# Option B (requires careful auditing): Use `pull_request_target`, BUT
+#   NEVER check out or run code from the fork branch under pull_request_target
+#   without explicit sandboxing — doing so allows arbitrary code execution
+#   with repository write permissions.
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required: fetches full history so the action can compute the PR diff
+
+      - name: DeepSeek Code Review
+        # Pin to a specific commit SHA for supply-chain security.
+        # Find the SHA: curl -s https://api.github.com/repos/deepseek-ai/code-review-action/git/ref/tags/v1 | jq -r '.object.sha'
+        # Replace <FULL-COMMIT-SHA> with the verified value before use.
+        uses: deepseek-ai/code-review-action@<FULL-COMMIT-SHA>
+        with:
+          model: deepseek-coder
+          language: en
+          max_tokens: ${{ vars.MAX_REVIEW_TOKENS || 4096 }}
+          review_prompt: |
+            You are a senior code reviewer specializing in JavaScript, React, and Node.js.
+            Review the following code changes for bugs, security vulnerabilities,
+            performance issues, and adherence to modern best practices.
+            Be specific and actionable in your feedback.
+          exclude: |
+            node_modules/**
+            dist/**
+            package-lock.json
+            yarn.lock
+            Cargo.lock
+            *.min.js
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
