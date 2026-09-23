@@ -549,20 +549,41 @@ impl TreeNodeVisitor<'_> for PushdownChecker<'_> {
     }
 }
 
-/// The field path from a Struct down to its first non-Struct child, or `None`
-/// when `data_type` is not a Struct or no child has a leaf.
+/// The field path from a Struct down to its first scalar leaf, falling back to
+/// a collection child only when necessary, or `None` when `data_type` is not a
+/// Struct or no child has a leaf.
 fn first_leaf_path(data_type: &DataType) -> Option<Vec<String>> {
     let DataType::Struct(fields) = data_type else {
         return None;
     };
 
-    fields.iter().find_map(|field| {
-        let mut path = vec![field.name().clone()];
-        if matches!(field.data_type(), DataType::Struct(_)) {
-            path.extend(first_leaf_path(field.data_type())?);
-        }
-        Some(path)
-    })
+    fields
+        .iter()
+        .filter(|field| !is_collection(field.data_type()))
+        .chain(
+            fields
+                .iter()
+                .filter(|field| is_collection(field.data_type())),
+        )
+        .find_map(|field| {
+            let mut path = vec![field.name().clone()];
+            if matches!(field.data_type(), DataType::Struct(_)) {
+                path.extend(first_leaf_path(field.data_type())?);
+            }
+            Some(path)
+        })
+}
+
+fn is_collection(data_type: &DataType) -> bool {
+    matches!(
+        data_type,
+        DataType::List(_)
+            | DataType::LargeList(_)
+            | DataType::ListView(_)
+            | DataType::LargeListView(_)
+            | DataType::FixedSizeList(_, _)
+            | DataType::Map(_, _)
+    )
 }
 
 /// Result of checking which columns are required for filter pushdown.
@@ -2027,7 +2048,7 @@ mod test {
     }
 
     #[test]
-    fn first_leaf_path_descends_to_the_first_primitive() {
+    fn first_leaf_path_prefers_scalar_leaves() {
         let inner = DataType::Struct(
             vec![
                 Arc::new(Field::new("inner", DataType::Int32, true)),
@@ -2059,6 +2080,21 @@ mod test {
         assert_eq!(
             first_leaf_path(&list_first),
             Some(vec!["items".to_string()])
+        );
+        let list_before_scalar = DataType::Struct(
+            vec![
+                Arc::new(Field::new_list(
+                    "items",
+                    Field::new("item", DataType::Int32, true),
+                    true,
+                )),
+                Arc::new(Field::new("tag", DataType::Utf8, true)),
+            ]
+            .into(),
+        );
+        assert_eq!(
+            first_leaf_path(&list_before_scalar),
+            Some(vec!["tag".to_string()])
         );
         // An empty first child is skipped.
         let empty_first = DataType::Struct(
