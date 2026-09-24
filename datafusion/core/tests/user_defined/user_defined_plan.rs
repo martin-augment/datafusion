@@ -510,9 +510,30 @@ impl OptimizerRule for TopKOptimizerRule {
         plan: LogicalPlan,
         _config: &dyn OptimizerConfig,
     ) -> Result<Transformed<LogicalPlan>, DataFusionError> {
-        // Note: this code simply looks for the pattern of a Limit followed by a
-        // Sort and replaces it by a TopK node. It does not handle many
-        // edge cases (e.g multiple sort columns, sort ASC / DESC), etc.
+        // Note: this code simply looks for a Sort with a fetch, or a Limit
+        // followed by a Sort, and replaces it by a TopK node. It does not
+        // handle many edge cases (e.g multiple sort columns, sort ASC / DESC),
+        // etc.
+        //
+        // `PushDownLimit` gives a Sort below a Limit the Limit's fetch and
+        // removes the Limit, so a Sort with a fetch is the usual shape.
+        if let LogicalPlan::Sort(Sort {
+            expr,
+            input,
+            fetch: Some(fetch),
+        }) = &plan
+            && expr.len() == 1
+        {
+            return Ok(Transformed::yes(LogicalPlan::Extension(Extension {
+                node: Arc::new(TopKPlanNode {
+                    k: *fetch,
+                    input: input.as_ref().clone(),
+                    expr: expr[0].clone(),
+                    invariant_mock: self.invariant_mock.clone(),
+                }),
+            })));
+        }
+
         let LogicalPlan::Limit(ref limit) = plan else {
             return Ok(Transformed::no(plan));
         };
@@ -783,39 +804,45 @@ struct TopKReader {
     /// Have we produced the output yet?
     done: bool,
     /// Output
-    state: BTreeMap<i64, String>,
+    state: BTreeMap<i64, Vec<String>>,
 }
 
 /// Keeps track of the revenue from customer_id and stores if it
 /// is the top values we have seen so far.
 fn add_row(
-    top_values: &mut BTreeMap<i64, String>,
+    top_values: &mut BTreeMap<i64, Vec<String>>,
     customer_id: &str,
     revenue: i64,
     k: &usize,
 ) {
-    top_values.insert(revenue, customer_id.into());
+    top_values
+        .entry(revenue)
+        .or_default()
+        .push(customer_id.into());
     // only keep top k
-    while top_values.len() > *k {
+    while top_values.values().map(Vec::len).sum::<usize>() > *k {
         remove_lowest_value(top_values)
     }
 }
 
-fn remove_lowest_value(top_values: &mut BTreeMap<i64, String>) {
-    if !top_values.is_empty() {
-        let smallest_revenue = {
-            let (revenue, _) = top_values.iter().next().unwrap();
-            *revenue
+fn remove_lowest_value(top_values: &mut BTreeMap<i64, Vec<String>>) {
+    if let Some(mut lowest) = top_values.first_entry() {
+        let is_empty = {
+            let customers = lowest.get_mut();
+            customers.pop();
+            customers.is_empty()
         };
-        top_values.remove(&smallest_revenue);
+        if is_empty {
+            lowest.remove();
+        }
     }
 }
 
 fn accumulate_batch(
     input_batch: &RecordBatch,
-    mut top_values: BTreeMap<i64, String>,
+    mut top_values: BTreeMap<i64, Vec<String>>,
     k: &usize,
-) -> BTreeMap<i64, String> {
+) -> BTreeMap<i64, Vec<String>> {
     let num_rows = input_batch.num_rows();
 
     // Assuming the input columns are
@@ -838,6 +865,38 @@ fn accumulate_batch(
     }
 
     top_values
+}
+
+fn top_values_to_rows(top_values: &BTreeMap<i64, Vec<String>>) -> (Vec<i64>, Vec<&str>) {
+    top_values
+        .iter()
+        .rev()
+        .flat_map(|(revenue, customers)| {
+            customers
+                .iter()
+                .map(move |customer| (*revenue, customer.as_str()))
+        })
+        .unzip()
+}
+
+#[test]
+fn topk_retains_tied_rows_within_fetch_limit() {
+    let mut top_values = BTreeMap::new();
+    let k = 3;
+
+    for (customer_id, revenue) in [
+        ("paul", 300),
+        ("jorge", 200),
+        ("andy", 200),
+        ("andrew", 100),
+    ] {
+        add_row(&mut top_values, customer_id, revenue, &k);
+    }
+
+    assert_eq!(
+        top_values_to_rows(&top_values),
+        (vec![300, 200, 200], vec!["paul", "jorge", "andy"])
+    );
 }
 
 impl Stream for TopKReader {
@@ -864,10 +923,7 @@ impl Stream for TopKReader {
             }
             Poll::Ready(None) => {
                 self.done = true;
-                let (revenue, customer): (Vec<i64>, Vec<&String>) =
-                    self.state.iter().rev().unzip();
-
-                let customer: Vec<&str> = customer.iter().map(|&s| &**s).collect();
+                let (revenue, customer) = top_values_to_rows(&self.state);
 
                 let customer_array: ArrayRef = match schema.field(0).data_type() {
                     arrow::datatypes::DataType::Utf8View => {
