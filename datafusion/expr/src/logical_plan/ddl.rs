@@ -30,7 +30,7 @@ use crate::sql::Ident;
 use arrow::datatypes::DataType;
 use datafusion_common::tree_node::{Transformed, TreeNodeContainer, TreeNodeRecursion};
 use datafusion_common::{
-    Constraints, DFSchemaRef, Result, SchemaReference, TableReference,
+    Constraints, DFSchema, DFSchemaRef, Result, SchemaReference, TableReference,
 };
 #[cfg(feature = "sql")]
 use sqlparser::ast::Ident;
@@ -615,6 +615,90 @@ impl PartialOrd for CreateExternalCatalog {
     }
 }
 
+impl CreateExternalCatalog {
+    /// Creates a builder for [`CreateExternalCatalog`].
+    ///
+    /// # Example
+    /// ```
+    /// # use datafusion_expr::CreateExternalCatalog;
+    /// let cmd = CreateExternalCatalog::builder("my_catalog", "memory")
+    ///     .with_if_not_exists(true)
+    ///     .build();
+    /// assert_eq!(cmd.catalog_name, "my_catalog");
+    /// ```
+    pub fn builder(
+        catalog_name: impl Into<String>,
+        catalog_type: impl Into<String>,
+    ) -> CreateExternalCatalogBuilder {
+        CreateExternalCatalogBuilder {
+            catalog_name: catalog_name.into(),
+            catalog_type: catalog_type.into(),
+            location: None,
+            if_not_exists: false,
+            or_replace: false,
+            options: HashMap::new(),
+            schema: Arc::new(DFSchema::empty()),
+        }
+    }
+}
+
+/// Builder for [`CreateExternalCatalog`].
+#[derive(Debug, Clone)]
+pub struct CreateExternalCatalogBuilder {
+    catalog_name: String,
+    catalog_type: String,
+    location: Option<String>,
+    if_not_exists: bool,
+    or_replace: bool,
+    options: HashMap<String, String>,
+    schema: DFSchemaRef,
+}
+
+impl CreateExternalCatalogBuilder {
+    /// Set the physical location of the catalog
+    pub fn with_location(mut self, location: Option<String>) -> Self {
+        self.location = location;
+        self
+    }
+
+    /// Set the if_not_exists flag
+    pub fn with_if_not_exists(mut self, if_not_exists: bool) -> Self {
+        self.if_not_exists = if_not_exists;
+        self
+    }
+
+    /// Set the or_replace flag
+    pub fn with_or_replace(mut self, or_replace: bool) -> Self {
+        self.or_replace = or_replace;
+        self
+    }
+
+    /// Set the catalog options
+    pub fn with_options(mut self, options: HashMap<String, String>) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Set the schema
+    pub fn with_schema(mut self, schema: DFSchemaRef) -> Self {
+        self.schema = schema;
+        self
+    }
+
+    /// Build the [`CreateExternalCatalog`]
+    pub fn build(self) -> CreateExternalCatalog {
+        CreateExternalCatalog {
+            catalog_name: self.catalog_name,
+            catalog_type: self.catalog_type,
+            location: self.location,
+            if_not_exists: self.if_not_exists,
+            or_replace: self.or_replace,
+            options: self.options,
+            schema: self.schema,
+        }
+    }
+}
+
 /// Creates a schema.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CreateCatalogSchema {
@@ -734,6 +818,64 @@ impl PartialOrd for DropCatalog {
         }
         // TODO (https://github.com/apache/datafusion/issues/17477) avoid recomparing all fields
         .filter(|cmp| *cmp != Ordering::Equal || self == other)
+    }
+}
+
+impl DropCatalog {
+    /// Creates a builder for [`DropCatalog`].
+    ///
+    /// # Example
+    /// ```
+    /// # use datafusion_expr::DropCatalog;
+    /// let cmd = DropCatalog::builder("my_catalog").with_if_exists(true).build();
+    /// assert_eq!(cmd.name, "my_catalog");
+    /// ```
+    pub fn builder(name: impl Into<String>) -> DropCatalogBuilder {
+        DropCatalogBuilder {
+            name: name.into(),
+            if_exists: false,
+            cascade: false,
+            schema: Arc::new(DFSchema::empty()),
+        }
+    }
+}
+
+/// Builder for [`DropCatalog`].
+#[derive(Debug, Clone)]
+pub struct DropCatalogBuilder {
+    name: String,
+    if_exists: bool,
+    cascade: bool,
+    schema: DFSchemaRef,
+}
+
+impl DropCatalogBuilder {
+    /// Set the if_exists flag
+    pub fn with_if_exists(mut self, if_exists: bool) -> Self {
+        self.if_exists = if_exists;
+        self
+    }
+
+    /// Set whether the drop should cascade
+    pub fn with_cascade(mut self, cascade: bool) -> Self {
+        self.cascade = cascade;
+        self
+    }
+
+    /// Set the schema
+    pub fn with_schema(mut self, schema: DFSchemaRef) -> Self {
+        self.schema = schema;
+        self
+    }
+
+    /// Build the [`DropCatalog`]
+    pub fn build(self) -> DropCatalog {
+        DropCatalog {
+            name: self.name,
+            if_exists: self.if_exists,
+            cascade: self.cascade,
+            schema: self.schema,
+        }
     }
 }
 
